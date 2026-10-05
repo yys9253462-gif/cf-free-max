@@ -75,7 +75,7 @@ A: 手动下载 https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip
    解压后确保 node.exe 在 %LOCALAPPDATA%\cf-free-max\node\node.exe
    然后重新运行「启动.bat」。
 
-Q: 「快查.bat」报错说找不到 curl？
+Q: 「启动.bat」报错说找不到 curl？
 A: 极老的系统才没有。可以直接用「启动.bat」，它走 Node。
 
 Q: 中文显示乱码？

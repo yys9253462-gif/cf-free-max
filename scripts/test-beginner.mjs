@@ -196,8 +196,7 @@ async function main() {
   // 重命名为 ASCII（避免中文文件名干扰测试本身）
   for (const [from, to] of [
     ['启动.bat', 'launcher.bat'],
-    ['快查.bat', 'quickcheck.bat'],
-    ['检测授权.bat', 'setup.bat'],
+    ['启动.bat', 'launcher.bat'],
   ]) {
     const src = path.join(appDir, from);
     if (fs.existsSync(src)) fs.renameSync(src, path.join(appDir, to));
@@ -205,8 +204,8 @@ async function main() {
 
   console.log(`  解压到：${appDir}`);
   check('分享包解压成功', fs.existsSync(path.join(appDir, 'launcher.bat')));
-  check('三个入口脚本齐全',
-    ['launcher.bat', 'quickcheck.bat', 'setup.bat'].every((f) => fs.existsSync(path.join(appDir, f))));
+  check('入口脚本存在',
+    ['launcher.bat'].every((f) => fs.existsSync(path.join(appDir, f))));
 
   // ═══ 1. 确认环境干净 ═══
   section('测试 1：环境真的是干净的');

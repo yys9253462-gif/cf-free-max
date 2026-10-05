@@ -2,7 +2,7 @@
 #  check-env.ps1 — 环境检测 + 授权引导
 #
 #  为什么单独一个 .ps1 而不是写在 .bat 里：
-#    见 快查.bat 顶部注释 —— .bat 内嵌 PowerShell 在 GBK 编码下必然乱码。
+#    见 启动.bat 顶部注释 —— .bat 内嵌 PowerShell 在 GBK 编码下必然乱码。
 #    所有 PowerShell 逻辑都要外置。
 #
 #  ⚠️ 本文件必须 UTF-8 **带 BOM** 保存，否则 PowerShell 5.1 按 ANSI 解析，

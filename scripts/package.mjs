@@ -4,7 +4,7 @@
  *
  * 生成一个别人下载解压就能用的 zip：
  *   - 双击「启动.bat」→ 需要 Node（没有会自动下载便携版）
- *   - 双击「快查.bat」→ 零依赖，Windows 自带工具即可
+ *   - 双击「启动.bat」→ 零依赖也能用（有 Node 则功能更全）
  *   - 完整源码与文档
  *   - **不含凭据**（打前会审计）
  *
@@ -41,8 +41,7 @@ const INCLUDE = [
   'package.json',
   '.env.example',
   '启动.bat',
-  '快查.bat',
-  '检测授权.bat',
+  '启动.bat',
   '使用说明.txt',
 ];
 
@@ -362,7 +361,7 @@ A: 手动下载 https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip
    解压后确保 node.exe 在 %LOCALAPPDATA%\\cf-free-max\\node\\node.exe
    然后重新运行「启动.bat」。
 
-Q: 「快查.bat」报错说找不到 curl？
+Q: 「启动.bat」报错说找不到 curl？
 A: 极老的系统才没有。可以直接用「启动.bat」，它走 Node。
 
 Q: 中文显示乱码？
@@ -506,7 +505,7 @@ function countCrlf(buf) {
  *   ✗ `ZipFile.CreateFromDirectory` 同上
  *   ✗ `ZipFile.Open` + UTF8Encoding  —— 实测仍乱码：PowerShell 5.1 下
  *      即使传了 UTF8Encoding，条目名还是按 ANSI 写入。
- *      实测：`快查.bat` 解压出来变成 `蹇煡.bat`（UTF-8 字节被按 GBK 读）。
+ *      实测：`启动.bat` 解压出来变成乱码文件名（UTF-8 字节被按 GBK 读）。
  *   ✓ `tar -a -c -f`           —— 用 ASCII 文件名，绕开整个编码问题
  *
  * 关键决策：**压缩包里的文件名用纯 ASCII**。
@@ -525,8 +524,7 @@ function zipDir(outDir, zipPath) {
   // 重命名关键文件为 ASCII（在临时副本上操作，不动源文件）
   const ASCII_NAMES = {
     '启动.bat': 'launcher.bat',
-    '快查.bat': 'quickcheck.bat',
-    '检测授权.bat': 'setup.bat',
+    '启动.bat': 'launcher.bat',
     '使用说明.txt': 'README-FIRST.txt',
   };
 

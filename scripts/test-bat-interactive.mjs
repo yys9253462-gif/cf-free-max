@@ -3,7 +3,7 @@
  * 批处理功能验证（用 SendKeys 模拟真实键盘输入）
  *
  * 为什么不能用管道测：
- *   `echo 1 | 快查.bat` 里，set /p 从管道读 —— 但多条 set /p 会争抢
+ *   `echo 1 | 启动.bat` 里，set /p 从管道读 —— 但多条 set /p 会争抢
  *   同一个管道缓冲区，行为与真实键盘输入不同。实测踩过：
  *   管道下所有分支都只输出 22 行（菜单），说明根本没进到子功能里。
  *
@@ -112,7 +112,7 @@ async function main() {
     console.log('⚠ 当前不是交互式桌面会话，SendKeys 不可用。');
     console.log('  请在真实桌面环境运行，或手工验证（见下方清单）。\n');
     console.log('手工验证清单：');
-    console.log('  1. 双击 快查.bat → 应看到带边框的菜单');
+    console.log('  1. 双击 启动.bat → 应看到带边框的菜单');
     console.log('  2. 输入 1 回车 → 额度对照表');
     console.log('  3. 按任意键 → 回到主菜单');
     console.log('  4. 输入 4 回车 → KV 估算，输入 3 和 2000 → 应报"超出额度"');
@@ -122,7 +122,7 @@ async function main() {
     process.exit(0);
   }
 
-  const bat = path.join(ROOT, '快查.bat');
+  const bat = path.join(ROOT, '启动.bat');
 
   // 场景 1：启动 → 退出
   console.log('\x1b[1m场景 1：启动并退出\x1b[0m');

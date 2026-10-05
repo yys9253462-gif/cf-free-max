@@ -1,5 +1,5 @@
 /**
- * 给 快查.bat 插入部署菜单
+ * 给 启动.bat 插入部署菜单
  *
  * 用一个脚本做这件事而不是手敲 PowerShell：
  *   PowerShell 处理这个文件踩了三次坑 ——
@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BAT = path.join(ROOT, '快查.bat');
+const BAT = path.join(ROOT, '启动.bat');
 
 /** GBK 读取（借 PowerShell 的 .NET Encoding） */
 function readGbk(file) {

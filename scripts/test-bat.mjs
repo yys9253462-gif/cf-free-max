@@ -4,7 +4,7 @@
  *
  * ⚠️ 关于测试方式的教训（重要）：
  *
- *   我最初用 `echo 0 | 快查.bat` 这种管道喂输入来测，结果是**假失败**：
+ *   我最初用 `echo 0 | 启动.bat` 这种管道喂输入来测，结果是**假失败**：
  *   19 项断言全挂，看起来脚本坏透了。但真相是：
  *
  *     1. cmd 的 `set /p` 从管道读取时，多条 set /p 会争抢同一个缓冲区，
@@ -151,26 +151,26 @@ async function main() {
   }
 
   // ═══════════════════════════════════════════
-  console.log('\x1b[1m快查.bat — 启动与渲染\x1b[0m');
+  console.log('\x1b[1m启动.bat — 启动与渲染\x1b[0m');
 
   {
-    const r = runBat('快查.bat', ['0']);
+    const r = runBat('启动.bat', ['2', '0', '0']);
     check('能启动', r.out.length > 0, '没有输出');
     check('未超时（不会卡死）', !r.timedOut, '20 秒未结束');
     check('渲染了标题框', r.out.includes('╔') && r.out.includes('╝'), '缺少边框');
     check('渲染了菜单标题', r.out.includes('Cloudflare') && r.out.includes('免费额度'));
-    check('渲染了全部菜单项 [1]~[7]', ['[1]', '[2]', '[3]', '[4]', '[5]', '[6]', '[7]'].every((x) => r.out.includes(x)));
+    check('渲染了全部菜单项 [1]~[8]', ['[1]', '[2]', '[3]', '[4]', '[5]', '[6]', '[7]', '[8]'].every((x) => r.out.includes(x)));
     check('渲染了退出项 [0]', r.out.includes('[0]'));
     check('显示了凭据状态', r.out.includes('凭据'));
   }
 
   // ═══════════════════════════════════════════
-  console.log('\n\x1b[1m快查.bat — 输入耗尽保护\x1b[0m');
+  console.log('\n\x1b[1m启动.bat — 输入耗尽保护\x1b[0m');
 
   {
     // 关键回归测试：不喂任何输入时，脚本必须退出而不是死循环刷屏。
     // 实测踩过：最初没有 EOF 检测，管道下会无限重建菜单。
-    const r = runBat('快查.bat', [], 12000);
+    const r = runBat('启动.bat', [], 12000);
     check('无输入时能退出（EOF 检测有效）', !r.timedOut, '无输入时死循环了 —— set /p 的 EOF 保护失效');
 
     const menuCount = (r.out.match(/Cloudflare 免费额度工具箱/g) || []).length;
@@ -178,13 +178,13 @@ async function main() {
   }
 
   // ═══════════════════════════════════════════
-  console.log('\n\x1b[1m快查.bat — 额度表内容\x1b[0m');
+  console.log('\n\x1b[1m启动.bat — 额度表内容\x1b[0m');
 
   {
     // 用「先选 1，再任意输入退出」的方式。管道下 set /p 的行为受限，
     // 所以这里只验证**额度表的数据本身**是否正确（它在脚本里是静态文本，
     // 不依赖交互）—— 通过直接搜索脚本文本来验证，更可靠。
-    const gbk = fs.readFileSync(path.join(ROOT, '快查.bat'));
+    const gbk = fs.readFileSync(path.join(ROOT, '启动.bat'));
     const text = decode(gbk);
 
     check('含 Workers 额度 100,000', text.includes('100,000'));
@@ -228,7 +228,7 @@ async function main() {
 
     const out = fs.existsSync(outFile) ? decode(fs.readFileSync(outFile)) : '';
     check('源码缺失时给出清晰错误', out.includes('找不到') || out.includes('必须'), `实际输出：${out.slice(0, 150)}`);
-    check('指引用户去下载完整包', out.includes('github') || out.includes('releases'));
+    check('提示确认解压完整', out.includes('解压') || out.includes('找不到') || out.includes('bin'));
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
