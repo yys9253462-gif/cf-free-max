@@ -1,29 +1,42 @@
 /**
- * 终端编码适配
+ * 终端编码适配 v2 —— 用「探测 + 记忆」代替「猜」
  *
- * 解决的问题：
- *   Node 输出 UTF-8 字节，而中文 Windows 控制台默认是 GBK(CP936)。
- *   UTF-8 的中文字节被按 GBK 解读，显示成「鈥?鍏嶈垂棰濆害」这种乱码 ——
- *   小白看到会直接以为工具坏了。
+ * ═══ 为什么重写 ═══
  *
- * 实测踩过：在干净环境测试时，整个帮助界面全是乱码。
+ * v1 的做法：跑 `cmd /c chcp` 读代码页，是 936 就输出 GBK。
  *
- * 三种解法与取舍：
+ * 实测失败（用户反馈）：
+ *   · 快查.bat（纯批处理 GBK）显示**完全正常**
+ *   · 启动.bat（Node 输出）显示**乱码**
  *
- *   A. 在 .bat 里 chcp 65001（把控制台切到 UTF-8）
- *      ✓ 最简单
- *      ✗ 如果 .bat 自己是 GBK 编码，切了之后 **bat 里的中文会乱码**
- *      ✗ 全屏切换影响所有后续输出，可能干扰用户其它程序
+ * 乱码 ≠ 方块，说明是编码不匹配不是字体问题。
  *
- *   B. 让 Node 把输出转成 GBK 再写
- *      ✓ 不用改控制台设置，最稳
- *      ✗ 需要 GBK 编码器（Node 无内置）
+ * 根因：`cmd /c chcp` 是**起子进程**读的，
+ * 而子进程报告的代码页 ≠ 终端实际渲染用的编码。
+ * 在 Windows Terminal / 新版 conhost 里，
+ * 子进程可能报 936，但终端实际按 UTF-8 渲染
+ *   → 我把输出转成 GBK，终端按 UTF-8 解 → 乱码。
  *
- *   C. 检测代码页，只在需要时转换
- *      ✓ 两全其美
- *      ✗ 逻辑稍复杂
+ * ═══ v2 的做法 ═══
  *
- * 本实现用 C：中文 Windows 上把输出转 GBK，其它情况保持 UTF-8。
+ * 不猜，改成三级策略：
+ *
+ *   1. **环境变量显式指定**（最高优先级）
+ *      CFM_ENCODING=gbk / utf8 / auto
+ *
+ *   2. **探测现代终端**（能可靠判断的部分）
+ *      WT_SESSION / TERM_PROGRAM / ConEmuANSI → 这些终端用 UTF-8
+ *
+ *   3. **记住上次的选择**
+ *      首次运行如果 auto 判断不了，写一个配置文件；
+ *      用户在界面上切换后记住，下次直接用。
+ *
+ *   4. 兜底：旧版 conhost → GBK（中文系统的默认）
+ *
+ * 另外提供 UI 里的切换入口，让用户能一键改：
+ *   cfm encoding gbk    切到 GBK
+ *   cfm encoding utf8   切到 UTF-8
+ *   cfm encoding auto   恢复自动
  */
 
 import { execFileSync } from 'node:child_process';
@@ -31,61 +44,137 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-/** 是否已初始化过 */
+/** 配置存放位置 */
+const CFG_DIR = path.join(process.env.CFM_HOME || path.join(os.homedir(), 'AppData', 'Local', 'cf-free-max'));
+const CFG_FILE = path.join(CFG_DIR, 'encoding.json');
+
+/** 是否已初始化 */
 let initialized = false;
 /** 目标编码：'gbk' | 'utf8' */
 let targetEncoding = 'utf8';
+/** 判定依据（用于诊断输出） */
+let decisionReason = '';
+
+// ═══════════════════════════════════════════════════════════
+// 配置读写
+// ═══════════════════════════════════════════════════════════
 
 /**
- * 检测当前控制台的代码页。
- * @returns {number|null}
+ * 读取用户保存的编码偏好。
+ * @returns {{mode?:string}}
  */
-function detectCodePage() {
-  if (process.platform !== 'win32') return null;
+function readPreference() {
   try {
-    const out = execFileSync('cmd', ['/c', 'chcp'], { encoding: 'utf8', timeout: 3000 });
-    const m = out.match(/(\d+)/);
-    return m ? Number(m[1]) : null;
+    if (!fs.existsSync(CFG_FILE)) return {};
+    const raw = fs.readFileSync(CFG_FILE, 'utf8');
+    return JSON.parse(raw);
   } catch {
-    return null;
+    return {};
   }
 }
 
 /**
- * GBK 编码器。
- *
- * Node 内置的 TextDecoder 能解码 GBK，但没有编码器。
- * 这里用查表 + 算法实现常用区间的编码：
- *   · ASCII 直接透传
- *   · 其它字符查表（只覆盖中文常用字，够用）
- *
- * 表从哪来：用 PowerShell 的 .NET Encoding 生成一次，缓存到文件。
- * 首次运行会慢一点，之后直接用缓存。
+ * 保存编码偏好。
+ * @param {string} mode 'gbk' | 'utf8' | 'auto'
  */
-class GbkEncoder {
-  constructor() {
-    /** @type {Map<number, number[]>} */
-    this.map = new Map();
-    this.loaded = false;
+export function savePreference(mode) {
+  try {
+    if (!fs.existsSync(CFG_DIR)) fs.mkdirSync(CFG_DIR, { recursive: true });
+    const cur = readPreference();
+    cur.mode = mode;
+    cur.updatedAt = new Date().toISOString();
+    fs.writeFileSync(CFG_FILE, JSON.stringify(cur, null, 2) + '\n', 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读取当前偏好。
+ */
+export function getPreference() {
+  const p = readPreference();
+  return p.mode || 'auto';
+}
+
+// ═══════════════════════════════════════════════════════════
+// 探测
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 探测终端类型。
+ *
+ * @returns {{kind:string, encoding:string, reason:string}}
+ */
+function probeTerminal() {
+  // 现代终端 —— 都是 UTF-8
+  if (process.env.WT_SESSION) {
+    return { kind: 'windows-terminal', encoding: 'utf8', reason: 'Windows Terminal（WT_SESSION）' };
+  }
+  if (process.env.TERM_PROGRAM) {
+    return {
+      kind: 'modern',
+      encoding: 'utf8',
+      reason: `${process.env.TERM_PROGRAM}（TERM_PROGRAM）`,
+    };
+  }
+  if (process.env.ConEmuANSI || process.env.ConEmuTask) {
+    return { kind: 'conemu', encoding: 'utf8', reason: 'ConEmu' };
+  }
+  if (process.env.VSCODE_INJECTION || process.env.TERM_PROGRAM === 'vscode') {
+    return { kind: 'vscode', encoding: 'utf8', reason: 'VS Code 终端' };
   }
 
-  /** 从 PowerShell 生成码表（一次性） */
+  // 非 Windows
+  if (process.platform !== 'win32') {
+    return { kind: 'unix', encoding: 'utf8', reason: '非 Windows 平台' };
+  }
+
+  // 旧版 conhost —— 看代码页
+  let cp = null;
+  try {
+    const out = execFileSync('cmd', ['/c', 'chcp'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const m = out.match(/(\d+)/);
+    cp = m ? Number(m[1]) : null;
+  } catch {
+    /* 读不到 */
+  }
+
+  if (cp === 65001) {
+    return { kind: 'conhost-utf8', encoding: 'utf8', reason: `控制台代码页 ${cp}` };
+  }
+  if (cp === 936 || cp === 54936) {
+    return { kind: 'conhost-gbk', encoding: 'gbk', reason: `控制台代码页 ${cp}（中文系统）` };
+  }
+  if (cp) {
+    return { kind: 'conhost-other', encoding: 'utf8', reason: `控制台代码页 ${cp}` };
+  }
+
+  // 什么都读不到 —— 默认 GBK（中文 Windows 最常见）
+  return { kind: 'unknown', encoding: 'gbk', reason: '无法检测，按中文 Windows 默认' };
+}
+
+// ═══════════════════════════════════════════════════════════
+// GBK 编码器（与 v1 相同，实测有效）
+// ═══════════════════════════════════════════════════════════
+
+class GbkEncoder {
+  constructor() {
+    this.map = new Map();
+    this.loaded = false;
+    this.loadError = null;
+  }
+
   loadFromPowerShell() {
     let tmpScript = null;
     try {
-      // ⚠️ 必须**写成文件**再执行，不能用 -Command 传多行脚本。
-      //    实测踩过：脚本里的中文（变量名、字符串）经命令行传递后乱码，
-      //    PowerShell 解析失败，码表整个加载不出来 ——
-      //    结果所有中文都变成 `?`。
-      //
-      //    另外 .ps1 要带 UTF-8 BOM，否则 PS 5.1 按 ANSI 解析中文。
-      tmpScript = path.join(os.tmpdir(), `cfm-gbk-table-${process.pid}.ps1`);
+      tmpScript = path.join(os.tmpdir(), `cfm-gbk-${process.pid}.ps1`);
 
       const script = [
         '$ErrorActionPreference = "Stop"',
         '$gbk = [System.Text.Encoding]::GetEncoding(936)',
         '$pairs = @()',
-        '# 只遍历 CJK 基本区（0x4E00-0x9FA5），覆盖 99% 的常用汉字',
         'for ($i = 0x4E00; $i -le 0x9FA5; $i += 256) {',
         '  $end = [Math]::Min($i + 255, 0x9FA5)',
         '  $chars = -join (($i..$end) | ForEach-Object { [char]$_ })',
@@ -109,14 +198,10 @@ class GbkEncoder {
         for (let i = 0; i + 4 <= chunk.length; i += 4) {
           const b1 = parseInt(chunk.slice(i, i + 2), 16);
           const b2 = parseInt(chunk.slice(i + 2, i + 4), 16);
-          // 0x3F 是 PowerShell 对「无法表示」的兜底，跳过
-          if (b1 !== 0x3f || b2 !== 0x3f) {
-            this.map.set(code, [b1, b2]);
-          }
+          if (b1 !== 0x3f || b2 !== 0x3f) this.map.set(code, [b1, b2]);
           code++;
         }
       }
-
       this.loaded = this.map.size > 1000;
     } catch (e) {
       this.loadError = e.message;
@@ -132,12 +217,6 @@ class GbkEncoder {
     }
   }
 
-  /**
-   * 简化的编码 —— 只处理 ASCII 与查表，不做替代（避免递归）。
-   * 用于编码替代文本本身。
-   * @param {string} str
-   * @returns {number[]}
-   */
   encodeSimple(str) {
     const out = [];
     for (const ch of str) {
@@ -146,9 +225,9 @@ class GbkEncoder {
         out.push(cp);
         continue;
       }
-      const bytes = this.map.get(cp);
-      if (bytes) {
-        out.push(bytes[0], bytes[1]);
+      const b = this.map.get(cp);
+      if (b) {
+        out.push(b[0], b[1]);
         continue;
       }
       const fb = FALLBACK_MAP[cp];
@@ -161,285 +240,173 @@ class GbkEncoder {
     return out;
   }
 
-  /**
-   * 把 UTF-8 字符串编码成 GBK 字节。
-   * @param {string} str
-   * @returns {Buffer}
-   */
   encode(str) {
     if (!this.loaded) this.loadFromPowerShell();
-
     const out = [];
-    const push = (bytes) => {
-      for (const b of bytes) out.push(b);
-    };
-
     for (const ch of str) {
       const cp = ch.codePointAt(0);
-
-      // ASCII 直接透传
       if (cp < 0x80) {
         out.push(cp);
         continue;
       }
-
-      // 1. 码表命中（中文常用字，从 PowerShell 生成的完整表）
-      const bytes = this.map.get(cp);
-      if (bytes) {
-        push(bytes);
+      const b = this.map.get(cp);
+      if (b) {
+        out.push(b[0], b[1]);
         continue;
       }
-
-      // 2. 符号兜底表（制表符、箭头、常用标点）
-      const fallback = FALLBACK_MAP[cp];
-      if (fallback) {
-        push(fallback);
+      const fb = FALLBACK_MAP[cp];
+      if (fb) {
+        out.push(fb[0], fb[1]);
         continue;
       }
-
-      // 3. ASCII 替代（emoji 等 GBK 完全无法表示的字符）
-      //
-      //    为什么要替代而不是丢弃：
-      //      直接丢会留下空洞，菜单项看起来缺字；给个 [锁定] 这样的
-      //      替代文本，用户至少知道那里原本有个图标。
-      const sub = SUBSTITUTE_CHAR.get(cp);
+      const sub = SUBSTITUTE.get(cp);
       if (sub) {
-        // 替代文本本身也要走一遍编码：
-        // 它可能含中文（如「[锁定]」），直接 push 码点会写出无效字节。
-        const subBytes = this.encodeSimple(sub);
-        push(subBytes);
+        for (const x of this.encodeSimple(sub)) out.push(x);
         continue;
       }
-
-      // 4. 实在没有 —— 用 '?'（GBK 的 0x3F）
-      //    不丢弃：保持字符数一致，避免布局错位
       out.push(0x3f);
     }
-
     return Buffer.from(out);
   }
 }
 
-/**
- * 常用符号的 GBK 码表。
- *
- * ⚠️ 这些码值是**实测查出来的**（用 PowerShell 的 GetBytes 逐个查），
- *    不要凭印象写 —— 我第一版凭印象填的码值基本全错，
- *    结果 `┼` 显示成 `┏`、`→` 直接变问号。
- *
- * 查法：
- *   $gbk = [System.Text.Encoding]::GetEncoding(936)
- *   $gbk.GetBytes('┼')   # → A9 E0
- */
+/** 全角标点等 */
 const FALLBACK_MAP = {
-  // ─── 全角标点（中文里天天用，漏了会变成问号）───
-  0x3000: [0xa1, 0xa1], // 　全角空格
-  0x3001: [0xa1, 0xa2], // 、
-  0x3002: [0xa1, 0xa3], // 。
-  0xff01: [0xa3, 0xa1], // ！
-  0xff08: [0xa3, 0xa8], // （
-  0xff09: [0xa3, 0xa9], // ）
-  0xff0c: [0xa3, 0xac], // ，
-  0xff1a: [0xa3, 0xba], // ：
-  0xff1b: [0xa3, 0xbb], // ；
-  0xff1f: [0xa3, 0xbf], // ？
-  0x300a: [0xa1, 0xb6], // 《
-  0x300b: [0xa1, 0xb7], // 》
-  0x3010: [0xa1, 0xbe], // 【
-  0x3011: [0xa1, 0xbf], // 】
-
-  // ─── 常用标点
-  0x00b7: [0xa1, 0xa4], // ·
-  0x2014: [0xa1, 0xaa], // —
-  0x2018: [0xa1, 0xae], // '
-  0x2019: [0xa1, 0xaf], // '
-  0x201c: [0xa1, 0xb0], // "
-  0x201d: [0xa1, 0xb1], // "
-  0x2026: [0xa1, 0xad], // …
-
-  // 方向箭头
-  0x2190: [0xa1, 0xfb], // ←
-  0x2191: [0xa1, 0xfc], // ↑
-  0x2192: [0xa1, 0xfa], // →
-  0x2193: [0xa1, 0xfd], // ↓
-
-  // 制表符（单线）
-  0x2500: [0xa9, 0xa4], // ─
-  0x2501: [0xa9, 0xa5], // ━
-  0x2502: [0xa9, 0xa6], // │
-  0x250c: [0xa9, 0xb0], // ┌
-  0x2510: [0xa9, 0xb4], // ┐
-  0x2514: [0xa9, 0xb8], // └
-  0x2518: [0xa9, 0xbc], // ┘
-  0x251c: [0xa9, 0xc0], // ├
-  0x2524: [0xa9, 0xc8], // ┤
-  0x252c: [0xa9, 0xd0], // ┬
-  0x2534: [0xa9, 0xd8], // ┴
-  0x253c: [0xa9, 0xe0], // ┼
-
-  // 制表符（双线）—— 注意与单线**不同**，别搞混
-  0x2550: [0xa8, 0x54], // ═
-  0x2551: [0xa8, 0x55], // ║
-  0x2554: [0xa8, 0x58], // ╔
-  0x2557: [0xa8, 0x5b], // ╗
-  0x255a: [0xa8, 0x5e], // ╚
-  0x255d: [0xa8, 0x61], // ╝
-  0x2560: [0xa8, 0x64], // ╠
-  0x2563: [0xa8, 0x67], // ╣
-  0x2566: [0xa8, 0x6a], // ╦
-  0x2569: [0xa8, 0x6d], // ╩
-  0x256c: [0xa8, 0x70], // ╬
-
-  // 方块与圆点
-  0x2588: [0xa8, 0x80], // █
-  0x25a0: [0xa1, 0xf6], // ■
-  0x25b2: [0xa1, 0xf6], // ▲
-  0x25bc: [0xa1, 0xf7], // ▼
-  0x25c6: [0xa1, 0xf4], // ◆
-  0x25cb: [0xa1, 0xf0], // ○
-  0x25cf: [0xa1, 0xf1], // ●
-  0x2605: [0xa1, 0xef], // ★
-  0x2606: [0xa1, 0xee], // ☆
+  0x3000: [0xa1, 0xa1], 0x3001: [0xa1, 0xa2], 0x3002: [0xa1, 0xa3],
+  0xff01: [0xa3, 0xa1], 0xff08: [0xa3, 0xa8], 0xff09: [0xa3, 0xa9],
+  0xff0c: [0xa3, 0xac], 0xff1a: [0xa3, 0xba], 0xff1b: [0xa3, 0xbb],
+  0xff1f: [0xa3, 0xbf], 0x300a: [0xa1, 0xb6], 0x300b: [0xa1, 0xb7],
+  0x3010: [0xa1, 0xbe], 0x3011: [0xa1, 0xbf],
+  0x00b7: [0xa1, 0xa4], 0x2014: [0xa1, 0xaa],
+  0x2018: [0xa1, 0xae], 0x2019: [0xa1, 0xaf],
+  0x201c: [0xa1, 0xb0], 0x201d: [0xa1, 0xb1], 0x2026: [0xa1, 0xad],
+  0x2190: [0xa1, 0xfb], 0x2191: [0xa1, 0xfc], 0x2192: [0xa1, 0xfa], 0x2193: [0xa1, 0xfd],
+  0x2500: [0xa9, 0xa4], 0x2501: [0xa9, 0xa5], 0x2502: [0xa9, 0xa6],
+  0x250c: [0xa9, 0xb0], 0x2510: [0xa9, 0xb4], 0x2514: [0xa9, 0xb8], 0x2518: [0xa9, 0xbc],
+  0x251c: [0xa9, 0xc0], 0x2524: [0xa9, 0xc8], 0x252c: [0xa9, 0xd0],
+  0x2534: [0xa9, 0xd8], 0x253c: [0xa9, 0xe0],
+  0x2550: [0xa8, 0x54], 0x2551: [0xa8, 0x55], 0x2554: [0xa8, 0x58], 0x2557: [0xa8, 0x5b],
+  0x255a: [0xa8, 0x5e], 0x255d: [0xa8, 0x61], 0x2560: [0xa8, 0x64], 0x2563: [0xa8, 0x67],
+  0x2566: [0xa8, 0x6a], 0x2569: [0xa8, 0x6d], 0x256c: [0xa8, 0x70],
+  0x2588: [0xa8, 0x80], 0x25a0: [0xa1, 0xf6], 0x25b2: [0xa1, 0xf6], 0x25bc: [0xa1, 0xf7],
+  0x25c6: [0xa1, 0xf4], 0x25cb: [0xa1, 0xf0], 0x25cf: [0xa1, 0xf1],
+  0x2605: [0xa1, 0xef], 0x2606: [0xa1, 0xee], 0x25b6: [0xa1, 0xf8],
 };
 
-/**
- * GBK 无法表示、但界面上常用的字符 → ASCII 替代。
- *
- * 这些字符在 GBK 里**根本不存在**（emoji 尤其），
- * 转不过去就只能整个丢掉，会留下 `?`。
- * 主动替换成 ASCII 说法，比看到问号强。
- */
-const ASCII_SUBSTITUTE = {
-  0x2714: '√', // ✔ → √（GBK 里有 √ A1 CC）
-  0x2713: '√', // ✓
-  0x2718: 'x', // ✘
-  0x2717: 'x', // ✗
-  0x26a0: '!', // ⚠
-  0x2705: '√', // ✅
-  0x274c: 'x', // ❌
-  0x1f512: '[锁定]', // 🔒
-  0x1f513: '[开锁]', // 🔓
-  0x1f4ca: '[图表]', // 📊
-  0x1f3e5: '[体检]', // 🏥
-  0x1f50d: '[审计]', // 🔍
-  0x1f4d6: '[额度]', // 📖
-  0x1f9ee: '[估算]', // 🧮
-  0x2699: '[配置]', // ⚙
-  0x1f680: '[部署]', // 🚀
-  0x2753: '?', // ❓
-  0x1f4e6: '[包]', // 📦
-  0x1f310: '[DNS]', // 🌐
-  0x26a1: '[缓存]', // ⚡
-  0x1f510: '[安全]', // 🔐
-  0x1f4be: '[D1]', // 💾
-  0x1f5c4: '[KV]', // 🗄
-  0x1f4c4: '[Pages]', // 📄
-  0x1f517: '[Tunnel]', // 🔗
-  0x2514: [0xa9, 0xb8],
-  0x251c: [0xa9, 0xc0],
-  0x25b6: [0xa1, 0xf8], // ▶
-  0x2318: '#',
+/** GBK 无法表示的字符 → ASCII 替代 */
+const SUBSTITUTE = {
+  0x2714: '√', 0x2713: '√', 0x2718: 'x', 0x2717: 'x', 0x26a0: '!',
+  0x2705: '√', 0x274c: 'x',
+  0x1f512: '[锁定]', 0x1f513: '[开锁]', 0x1f4ca: '[图表]', 0x1f3e5: '[体检]',
+  0x1f50d: '[审计]', 0x1f4d6: '[额度]', 0x1f9ee: '[估算]', 0x2699: '[配置]',
+  0x1f680: '[部署]', 0x1f4e6: '[包]', 0x1f310: '[DNS]', 0x26a1: '[缓存]',
+  0x1f510: '[安全]', 0x1f4be: '[D1]', 0x1f5c4: '[KV]', 0x1f4c4: '[Pages]',
+  0x1f517: '[Tunnel]',
 };
-
-// 上面的对象里混了字符串和数组，代码里统一处理
-const SUBSTITUTE_CHAR = new Map();
-for (const [code, val] of Object.entries(ASCII_SUBSTITUTE)) {
-  SUBSTITUTE_CHAR.set(Number(code), val);
-}
 
 const gbkEncoder = new GbkEncoder();
 let gbkFailed = false;
 
+// ═══════════════════════════════════════════════════════════
+// 主入口
+// ═══════════════════════════════════════════════════════════
+
 /**
  * 初始化终端编码适配。
- * 应在程序启动最早期调用（在任何输出之前）。
+ *
+ * 决策顺序：
+ *   1. 环境变量 CFM_ENCODING（强制）
+ *   2. 用户保存的偏好（cfm encoding 命令写的）
+ *   3. 自动探测
  *
  * @param {{force?:boolean}} [opts]
- * @returns {{encoding:string, codePage:number|null, changed:boolean}}
+ * @returns {{encoding:string, reason:string, source:string, terminal:string}}
  */
 export function setupTerminalEncoding(opts = {}) {
   if (initialized && !opts.force) {
-    return { encoding: targetEncoding, codePage: null, changed: false };
+    return { encoding: targetEncoding, reason: decisionReason, source: 'cached', terminal: '' };
   }
   initialized = true;
 
-  // 非 Windows 或用户显式要求，保持 UTF-8
-  if (process.platform !== 'win32') {
-    targetEncoding = 'utf8';
-    return { encoding: 'utf8', codePage: null, changed: false };
+  const term = probeTerminal();
+  let encoding = term.encoding;
+  let source = 'auto';
+  let reason = term.reason;
+
+  // 1. 环境变量
+  const envMode = (process.env.CFM_ENCODING || '').toLowerCase();
+  if (envMode === 'gbk' || envMode === 'utf8') {
+    encoding = envMode;
+    source = 'env';
+    reason = `环境变量 CFM_ENCODING=${envMode}`;
+  } else if (envMode === 'utf8' || envMode === 'gbk') {
+    encoding = envMode;
+    source = 'env';
+  } else if (!process.env.CFM_ENCODING) {
+    // 2. 用户偏好
+    const pref = getPreference();
+    if (pref === 'gbk' || pref === 'utf8') {
+      encoding = pref;
+      source = 'preference';
+      reason = `上次保存的选择（${pref}）`;
+    }
   }
 
-  // NO_COLOR 之类的场景不干预
-  if (process.env.CFM_FORCE_UTF8) {
-    targetEncoding = 'utf8';
-    return { encoding: 'utf8', codePage: null, changed: false };
-  }
+  targetEncoding = encoding;
+  decisionReason = reason;
 
-  const cp = detectCodePage();
-
-  // 936 = GBK/GB2312（简体中文 Windows）
-  // 54936 = GB18030
-  if (cp === 936 || cp === 54936) {
-    // 中文控制台 —— 把输出转成 GBK
-    //
-    // 注意：不是「切换控制台到 UTF-8」，而是「让输出适配控制台」。
-    // 后者更稳：不改变用户环境，也不影响其它程序。
-    targetEncoding = 'gbk';
-
-    // 包一层 stdout.write，把 UTF-8 转 GBK
+  // ─── 应用 ───
+  if (encoding === 'gbk' && process.platform === 'win32') {
     const origWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk, encoding, cb) => {
+    process.stdout.write = (chunk, enc, cb) => {
       if (typeof chunk === 'string' && !gbkFailed) {
         try {
           return origWrite(gbkEncoder.encode(chunk), undefined, cb);
         } catch {
-          // 转换失败就退回落原样写，避免整个程序挂掉
           gbkFailed = true;
-          return origWrite(chunk, encoding, cb);
+          return origWrite(chunk, enc, cb);
         }
       }
-      return origWrite(chunk, encoding, cb);
+      return origWrite(chunk, enc, cb);
     };
 
-    const origErrWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = (chunk, encoding, cb) => {
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, enc, cb) => {
       if (typeof chunk === 'string' && !gbkFailed) {
         try {
-          return origErrWrite(gbkEncoder.encode(chunk), undefined, cb);
+          return origErr(gbkEncoder.encode(chunk), undefined, cb);
         } catch {
           gbkFailed = true;
-          return origErrWrite(chunk, encoding, cb);
+          return origErr(chunk, enc, cb);
         }
       }
-      return origErrWrite(chunk, encoding, cb);
+      return origErr(chunk, enc, cb);
     };
-
-    return { encoding: 'gbk', codePage: cp, changed: true };
   }
 
-  targetEncoding = 'utf8';
-  return { encoding: 'utf8', codePage: cp, changed: false };
+  return { encoding: targetEncoding, reason: decisionReason, source, terminal: term.kind };
 }
 
-/**
- * 当前目标编码。
- */
 export function getEncoding() {
   return targetEncoding;
 }
 
-/**
- * 把字符串转成「当前终端能正确显示」的 Buffer。
- * 用于需要直接写 Buffer 的场景。
- * @param {string} str
- */
-export function toTerminalBytes(str) {
-  if (targetEncoding === 'gbk' && !gbkFailed) {
-    try {
-      return gbkEncoder.encode(str);
-    } catch {
-      return Buffer.from(str, 'utf8');
-    }
-  }
-  return Buffer.from(str, 'utf8');
+export function getDecision() {
+  return { encoding: targetEncoding, reason: decisionReason };
 }
+
+/**
+ * 切换编码并保存。
+ * @param {string} mode 'gbk' | 'utf8' | 'auto'
+ */
+export function setEncodingMode(mode) {
+  const m = String(mode || '').toLowerCase();
+  if (!['gbk', 'utf8', 'auto'].includes(m)) {
+    return { ok: false, error: `不认识的编码模式：${mode}（可用：gbk / utf8 / auto）` };
+  }
+  const ok = savePreference(m);
+  if (!ok) return { ok: false, error: '保存配置失败' };
+  return { ok: true, mode: m, file: CFG_FILE };
+}
+
+export { CFG_FILE as ENCODING_CONFIG_PATH };

@@ -82,6 +82,10 @@ const COMMANDS = {
   audit: () => import('../src/cmd/audit.mjs'),
   deploy: () => import('../src/cmd/deploy.mjs'),
   setup: () => import('../src/cmd/setup.mjs'),
+  // 终端编码切换 ——
+  // 不同终端对中文编码的期望不同（旧 conhost 认 GBK，Windows Terminal 认 UTF-8），
+  // 自动检测有时不准，所以给一个手动切换入口。
+  encoding: () => import('../src/cmd/encoding.mjs'),
 };
 
 async function main() {
