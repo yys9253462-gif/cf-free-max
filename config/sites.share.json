@@ -28,7 +28,7 @@
       "branch": "main",
       "description": "Astro 博客。向导会自动识别框架与构建方式。",
       "bindings": [],
-      "patches": ["disable-rss-route", "disable-sitemap", "tolerate-partial-build"]
+      "patches": ["disable-rss-route", "disable-sitemap", "tolerate-partial-build", "fix-astro-site-url", "fix-cms-base-url"]
     },
     {
       "id": "nav",

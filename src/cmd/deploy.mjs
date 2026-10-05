@@ -244,8 +244,20 @@ export async function run({ flags }) {
       // 构建补丁：处理上游依赖的兼容问题（如 RSS 与 zod 4 冲突）
       const patchIds = flags['no-patches'] ? [] : site.patches ?? [];
       if (patchIds.length) {
+        // 把站点的实际域名传给补丁 —— 有些补丁需要它
+        // （比如修正 astro.config 的 site、CMS 的 base_url）
+        //
+        // 域名优先级：自定义域 > pages.dev 默认域
+        // 这样即使没配自定义域，canonical 也能指向可访问的地址。
+        if (site.domain) {
+          process.env.CFM_SITE_URL = `https://${site.domain}`;
+        } else {
+          process.env.CFM_SITE_URL = `https://${site.project}.pages.dev`;
+        }
+
         const pr = await applyPatches(path.join(cfg.workspace, site.repo), patchIds);
         result.patches = pr;
+        delete process.env.CFM_SITE_URL;
       }
 
       const r = await stepBuild(site, cfg, {});

@@ -187,6 +187,92 @@ export const PATCHES = {
       return { changed: false, note: '这是行为标记，由部署引擎读取' };
     },
   },
+
+  /**
+   * 把 astro.config 里的 site 域名改成实际部署的域名。
+   *
+   * 为什么需要：
+   *   分享出去的仓库里 site 是占位符（blog.example.com），
+   *   别人部署后所有页面的 canonical / og:url 都指向这个不存在的域名 ——
+   *   SEO 出问题，社交分享的预览也拿不到图。
+   *
+   *   用补丁而不是让用户改源码：改源码的东西下次 pull 就没了。
+   *
+   * 域名从环境变量 CFM_SITE_URL 读（deploy 命令在调用补丁前会设置）。
+   */
+  'fix-astro-site-url': {
+    id: 'fix-astro-site-url',
+    desc: '修正 astro.config 的站点域名',
+    reason: '仓库里的 site 是占位符，需改成实际部署域名，否则 canonical/og:url 会指向错误地址',
+    apply(dir) {
+      const configs = ['astro.config.mjs', 'astro.config.ts', 'astro.config.js'];
+      const configPath = configs.map((f) => path.join(dir, f)).find((f) => fs.existsSync(f));
+      if (!configPath) return { changed: false, note: '没有找到 astro.config' };
+
+      const targetUrl = process.env.CFM_SITE_URL;
+      if (!targetUrl) {
+        return { changed: false, note: '未提供 CFM_SITE_URL，跳过' };
+      }
+
+      let text = fs.readFileSync(configPath, 'utf8');
+      const original = text;
+
+      const re = /(\bsite\s*:\s*)(["'])([^"']*)(\2)/;
+      const m = text.match(re);
+      if (!m) return { changed: false, note: '配置里没有 site 字段' };
+
+      const before = m[3];
+      const clean = targetUrl.replace(/\/$/, '');
+      if (before === clean || before === clean + '/') {
+        return { changed: false, note: `site 已是 ${clean}` };
+      }
+
+      text = text.replace(re, `$1$2${clean}/$2`);
+
+      const backup = `${configPath}.cfm-backup`;
+      if (!fs.existsSync(backup)) fs.copyFileSync(configPath, backup);
+
+      fs.writeFileSync(configPath, text, 'utf8');
+      return { changed: true, note: `site: ${before} → ${clean}/` };
+    },
+  },
+
+  /**
+   * 修正 Decap CMS 的 base_url（网页后台的回调地址）。
+   */
+  'fix-cms-base-url': {
+    id: 'fix-cms-base-url',
+    desc: '修正 CMS 后台的回调域名',
+    reason: 'public/admin/config.yml 里的 base_url 是占位符，不改的话后台登录会跳到错误地址',
+    apply(dir) {
+      const cfgPath = path.join(dir, 'public', 'admin', 'config.yml');
+      if (!fs.existsSync(cfgPath)) {
+        return { changed: false, note: '没有 public/admin/config.yml' };
+      }
+
+      const targetUrl = process.env.CFM_SITE_URL;
+      if (!targetUrl) {
+        return { changed: false, note: '未提供 CFM_SITE_URL，跳过' };
+      }
+
+      let text = fs.readFileSync(cfgPath, 'utf8');
+      const original = text;
+      const root = targetUrl.replace(/\/$/, '');
+
+      const re = /(\s*base_url\s*:\s*)(\S+)/;
+      const m = text.match(re);
+      if (!m) return { changed: false, note: '配置里没有 base_url' };
+      if (m[2] === root) return { changed: false, note: `base_url 已是 ${root}` };
+
+      text = text.replace(re, `$1${root}`);
+
+      const backup = `${cfgPath}.cfm-backup`;
+      if (!fs.existsSync(backup)) fs.copyFileSync(cfgPath, backup);
+
+      fs.writeFileSync(cfgPath, text, 'utf8');
+      return { changed: true, note: `base_url: ${m[2]} → ${root}` };
+    },
+  },
 };
 
 /**
