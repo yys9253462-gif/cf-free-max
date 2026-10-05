@@ -122,10 +122,13 @@ echo  ─────────────────────────────────────
 echo.
 echo  接下来做什么？
 echo.
-echo    [1]  配置授权（推荐）
-echo         会引导你完成 GitHub 和 Cloudflare 授权
-echo    [2]  先不配置，直接进主界面
-echo         额度查询等功能可用；需要凭据的功能稍后再配
+echo    [1]  一键搭建（推荐）
+echo         自动完成：检测环境 → 配置授权 → 配置部署 → 进主界面
+echo         中间只会问你必须回答的（GitHub 用户名、要不要绑域名）
+echo.
+echo    [2]  先跳过，直接进主界面
+echo         额度查询等功能可用；搭建可以稍后再做
+echo.
 echo    [0]  退出
 echo.
 set "FIRSTCHOICE="
@@ -134,7 +137,7 @@ set /p "FIRSTCHOICE=请选择 [0-2]: "
 REM 输入耗尽（被脚本调用/管道）→ 按推荐选项走，不卡住
 if not defined FIRSTCHOICE set "FIRSTCHOICE=1"
 
-if "%FIRSTCHOICE%"=="1" goto :first_auth
+if "%FIRSTCHOICE%"=="1" goto :first_setup
 if "%FIRSTCHOICE%"=="2" goto :first_done
 if "%FIRSTCHOICE%"=="0" goto :quit
 
@@ -145,12 +148,81 @@ ping -n 2 127.0.0.1 >nul 2>&1
 goto :first_ask
 
 
-:first_auth
-if not exist "%PS1_DIR%\auth-setup.ps1" goto :first_done
+REM ═══════════════════════════════════════════════════════════════════════════
+REM  一键搭建
+REM
+REM  顺序：授权向导 → setup 向导 → 写标记 → 进主界面
+REM
+REM  ?? 必须先授权再 setup ——
+REM     setup 要用 Cloudflare Token 去创建 D1/R2，没授权它做不了。
+REM ═══════════════════════════════════════════════════════════════════════════
+:first_setup
+
+REM ─── 第 1 步：授权向导 ───
+echo.
+echo  ════════════════════════════════════════════════════════════════
+echo   [1/3] 配置授权
+echo  ════════════════════════════════════════════════════════════════
+echo.
+if not exist "%PS1_DIR%\auth-setup.ps1" (
+  echo  跳过（找不到授权脚本，可能解压不完整）
+  goto :first_setup_deploy
+)
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\auth-setup.ps1"
+
+:first_setup_deploy
+REM ─── 第 2 步：部署配置向导 ───
+echo.
+echo  ════════════════════════════════════════════════════════════════
+echo   [2/3] 配置部署
+echo  ════════════════════════════════════════════════════════════════
+echo.
+echo  这一步会：
+echo    · 自动检测你的 GitHub 账号
+echo    · 自动分析每个仓库的构建方式
+echo    · 自动在你账号下创建需要的数据库 / 存储
+echo.
+
+REM 确认 Node 可用（没有就问要不要下载）
+where node >nul 2>&1
+if %errorlevel%==0 goto :first_setup_run
+if exist "%NODE_EXE%" (
+  set "PATH=%NODE_DIR%;%PATH%"
+  goto :first_setup_run
+)
+
+echo  配置部署需要 Node.js，当前没有可用的。
+echo.
+choice /c YN /n /m "  现在下载便携版 Node（约 30 MB）？[Y/N] "
+if errorlevel 2 goto :first_setup_skip
+
+REM 下载逻辑复用 :lf_download 那段（它用 goto 串联，不是子程序）。
+REM 所以这里设一个标记，下载完让它回到 setup 而不是回主菜单。
+set "CFM_AFTER_DOWNLOAD=setup"
+goto :lf_download
+
+:first_setup_run
+node "%SCRIPT_DIR%\bin\cfm.mjs" setup
+if errorlevel 1 goto :first_setup_skip
+
+echo.
+echo  ════════════════════════════════════════════════════════════════
+echo   [3/3] 完成
+echo  ════════════════════════════════════════════════════════════════════
+echo.
+echo  一键搭建完成。
+echo.
+goto :first_done
+
+
+:first_setup_skip
+echo.
+echo  搭建未完成 —— 可以稍后在主界面选 [3] 重新配置。
+echo.
 
 
 :first_done
+REM 写标记文件，下次不再走首次流程
 REM 写标记文件，下次不再走首次流程
 if not exist "%CFM_HOME%" mkdir "%CFM_HOME%" >nul 2>&1
 echo initialized at %DATE% %TIME% > "%FIRST_RUN_FLAG%" 2>nul
@@ -605,6 +677,12 @@ echo.
 echo  下载完成。
 echo.
 set "PATH=%NODE_DIR%;%PATH%"
+
+REM 首次流程里下载的 → 回去继续 setup
+if "%CFM_AFTER_DOWNLOAD%"=="setup" (
+  set "CFM_AFTER_DOWNLOAD="
+  goto :first_setup_run
+)
 goto :lf_use_portable
 
 
@@ -1056,4 +1134,5 @@ echo  再见。
 echo.
 endlocal
 exit /b 0
+
 
