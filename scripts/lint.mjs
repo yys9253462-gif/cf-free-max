@@ -32,10 +32,14 @@ const problems = [];
 const SELF = path.resolve(fileURLToPath(import.meta.url));
 
 function walk(dir, out = []) {
+  // 跳过不该检查的目录：
+  //   dist/      打包产物（同一批文件的副本，扫它会报重复问题）
+  //   .sites/    clone 下来的第三方仓库（不该用本项目规则检查）
+  //   .wrangler/ wrangler 的本地状态
+  const SKIP = ['node_modules', '.git', 'dist', 'build', 'coverage', '.sites', '.wrangler'];
+
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    // 跳过产物目录 —— dist/ 是打包输出，里面是同一批文件的副本，
-    // 扫它会报一堆重复问题（实测：505 条警告全是 dist 里的副本）
-    if (['node_modules', '.git', 'dist', 'build', 'coverage'].includes(e.name)) continue;
+    if (SKIP.includes(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
     else if (e.name.endsWith('.mjs') && path.resolve(p) !== SELF) out.push(p);
@@ -77,6 +81,8 @@ for (const file of files) {
       rel.startsWith('scripts/') ||
       rel.startsWith('test/') ||
       rel === 'src/lib/util.mjs' || // 日志器本体
+      rel === 'src/lib/spinner.mjs' || // 进度渲染层（画面就是它的输出）
+      rel === 'src/lib/deploy-patches.mjs' || // 补丁应用时的用户可见提示
       rel === 'src/lib/prompt.mjs' || // 交互渲染层（banner/清屏本质就是输出）
       rel === 'src/lib/cf.mjs'; // 调试输出
     if (!isCli && /console\.(log|error|warn)\s*\(/.test(code) && !line.trimStart().startsWith('*')) {

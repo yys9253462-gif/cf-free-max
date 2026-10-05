@@ -15,6 +15,7 @@ setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "ENTRY=%SCRIPT_DIR%\bin\cfm.mjs"
+set "PS1_DIR=%SCRIPT_DIR%\scripts"
 
 REM 便携版 Node 的存放位置：优先用环境变量指定，否则放用户目录
 if not defined CFM_HOME set "CFM_HOME=%LOCALAPPDATA%\cf-free-max"
@@ -29,6 +30,76 @@ set "NODE_MIRROR=https://npmmirror.com/mirrors/node/v%NODE_VERSION%/%NODE_ZIP%"
 
 title Cloudflare 免费额度工具箱
 color 0B
+
+REM ─── 首次运行：环境检测 + 授权引导 ───
+REM
+REM 为什么要做这一步：
+REM   直接启动会在「没有凭据」「没装 git」这类情况下走很远才报错，
+REM   用户不知道哪里出了问题。先检测一遍，把问题在入口处说清楚。
+REM
+REM 只在首次运行时做（用标记文件记住），之后想重跑可以从菜单选 [9]。
+
+set "FIRST_RUN_FLAG=%CFM_HOME%\.initialized"
+if exist "%FIRST_RUN_FLAG%" goto :skip_first_run
+if not exist "%PS1_DIR%\check-env.ps1" goto :skip_first_run
+
+REM 首次运行 —— 强制走一遍检测
+goto :first_run_check
+
+:skip_first_run
+REM 已经有标记，直接启动
+if "%1"=="" goto :launch_normal
+:launch_normal
+
+REM 支持传参：启动.bat whoami 会直接执行命令
+goto :entry_check
+
+
+:first_run_check
+cls
+echo.
+echo  ╔════════════════════════════════════════════════════════════════╗
+echo  ║              首次运行 · 环境检测                                ║
+echo  ╚════════════════════════════════════════════════════════════════╝
+echo.
+echo  正在检查你的环境（工具链 / 网络 / 授权 / 配置）...
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\check-env.ps1"
+
+echo.
+echo  ────────────────────────────────────────────────────────────────
+echo.
+echo  接下来做什么？
+echo.
+echo    [1]  配好授权再启动（推荐）
+echo    [2]  直接启动（有些功能会不可用）
+echo    [0]  退出
+echo.
+set "FIRSTCHOICE="
+set /p "FIRSTCHOICE=请选择 [0-2]: "
+if not defined FIRSTCHOICE goto :entry_check
+
+if "%FIRSTCHOICE%"=="1" goto :first_run_auth
+if "%FIRSTCHOICE%"=="2" goto :first_run_done
+if "%FIRSTCHOICE%"=="0" exit /b 0
+goto :first_run_check
+
+:first_run_auth
+if not exist "%PS1_DIR%\auth-setup.ps1" goto :first_run_done
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\auth-setup.ps1"
+
+:first_run_done
+REM 写标记文件，下次不再走首次流程
+if not exist "%CFM_HOME%" mkdir "%CFM_HOME%" >nul 2>&1
+echo initialized at %DATE% %TIME% > "%FIRST_RUN_FLAG%" 2>nul
+
+echo.
+echo  环境检测完成。
+echo.
+ping -n 2 127.0.0.1 >nul 2>&1
+
+
+:entry_check
 
 REM ─── 入口检查 ───
 if not exist "%ENTRY%" goto :missing_source

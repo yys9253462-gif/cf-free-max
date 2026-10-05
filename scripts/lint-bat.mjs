@@ -152,16 +152,62 @@ for (const name of batFiles) {
       // 合法，跳过
     }
 
-    // 未转义的 & 在 echo 里（除非被 ^ 转义）
+    // echo 里的未转义 < > —— 会被当成重定向
+    //
+    // ⚠️ 要排除合法的重定向写法：
+    //   echo text > file        ← 有意的输出重定向，正常
+    //   echo text 2>nul         ← 错误重定向，正常
+    //   echo text 2>&1          ← 合并流，正常
+    // 实测踩过：不排除的话，任何带重定向的 echo 都会被误报。
     if (/^\s*echo\b/i.test(trimmed)) {
+      // 逐字符扫描，跳过引号内内容与 ^ 转义，只看裸的 < >
+      //
+      // 为什么不用正则：重定向的写法太多（> file、>> file、2>nul、2>&1、
+      // >"带空格 的路径"），正则边界很难写对。
+      // 实测踩过：`\S+` 贪婪匹配把 `"路径" 2>nul` 整个吞掉，
+      // 导致重定向没被剥离、每一行都误报。
       const body = trimmed.slice(4);
-      // 找未被 ^ 转义的 & | < >
-      const unescaped = body.replace(/\^[&|<>]/g, '').replace(/\^/g, '');
-      if (/[<>]/.test(unescaped) && !/^echo\s*\./.test(trimmed)) {
-        // echo 里的 > 会被当重定向
-        if (!/\d?>&\d?/.test(body)) {
-          report(name, 'error', n, 'echo 中含未转义的 < 或 > —— 会被当成重定向');
+      let inQuote = false;
+      let escaped = false;
+      let bad = null;
+
+      for (let k = 0; k < body.length; k++) {
+        const ch = body[k];
+
+        if (escaped) {
+          escaped = false;
+          continue;
         }
+        if (ch === '^') {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') {
+          inQuote = !inQuote;
+          continue;
+        }
+        if (inQuote) continue;
+
+        if (ch === '<' || ch === '>') {
+          // 是重定向吗？看它前后
+          //   > file / 2>nul / 2>&1  → 前面是空白或数字
+          const prev = k > 0 ? body[k - 1] : ' ';
+          const next = k + 1 < body.length ? body[k + 1] : ' ';
+
+          // 前面无空格且是数字 → 文件描述符重定向（2>nul）
+          if (/\d/.test(prev) && k > 0 && !/\s/.test(prev)) continue;
+          // 紧跟着 & 或数字 → 流重定向（>&1）
+          if (next === '&' || /\d/.test(next)) continue;
+          // 前面有空白 → 输出重定向，合法
+          if (/[\s]/.test(prev)) continue;
+
+          bad = ch;
+          break;
+        }
+      }
+
+      if (bad) {
+        report(name, 'error', n, `echo 正文中含未转义的 ${bad} —— 会被当成重定向，需写成 ^${bad}`);
       }
     }
 

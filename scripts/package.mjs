@@ -42,6 +42,7 @@ const INCLUDE = [
   '.env.example',
   '启动.bat',
   '快查.bat',
+  '检测授权.bat',
   '使用说明.txt',
 ];
 
@@ -520,6 +521,7 @@ function zipDir(outDir, zipPath) {
   const ASCII_NAMES = {
     '启动.bat': 'launcher.bat',
     '快查.bat': 'quickcheck.bat',
+    '检测授权.bat': 'setup.bat',
     '使用说明.txt': 'README-FIRST.txt',
   };
 
@@ -542,7 +544,7 @@ function zipDir(outDir, zipPath) {
   if (fs.existsSync(readmePath)) {
     let txt = fs.readFileSync(readmePath, 'utf8');
     txt = txt
-      .replace(/启动\.bat/g, 'launcher.bat')
+      .replace(/启动\.bat/g, 'launcher.bat').replace(/检测授权\.bat/g, 'setup.bat')
       .replace(/快查\.bat/g, 'quickcheck.bat')
       .replace(/使用说明\.txt/g, 'README-FIRST.txt');
     fs.writeFileSync(readmePath, txt, 'utf8');
