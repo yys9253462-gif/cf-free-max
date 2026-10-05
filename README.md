@@ -74,7 +74,42 @@ $ cfm kv budget NS_ID --per-request-writes 3 --daily-requests 2000
 
 ## 快速开始
 
-### 1. 准备凭据（两种方式）
+### 1. 直接跑（不用记命令）
+
+```bash
+git clone https://github.com/yys9253462-gif/cf-free-max.git
+cd cf-free-max
+node bin/cfm.mjs          # 不带参数就进交互菜单
+```
+
+```
+╭──────────────────────────────────────────────────────────╮
+│  Cloudflare 免费额度工具箱                                │
+│  cfm interactive                                          │
+╰──────────────────────────────────────────────────────────╯
+● 凭据不可用 （仍可浏览额度表与使用估算器）
+  ↳ 尚未配置凭据：设置环境变量 CF_API_TOKEN，或建 .env 文件
+
+你想做什么？
+  ❯  01. 📊  看用量           需要凭据
+     02. 🩺  做体检           需要凭据
+     03. 🔍  全账号审计       需要凭据
+     04. 📖  额度速查         离线可用 · 免费额度对照表与踩坑
+     05. 🧮  场景估算         部分离线可用 · 这个用法能撑多少流量？
+     06. ⚙️   配置与操作      需要凭据
+     07. 🚀  初始化向导       需要凭据
+     08. ❓  帮助
+     09. 退出
+
+↑↓ 选择 · 回车确认 · 直接按数字 · q 返回
+```
+
+**没配凭据也能用** —— 额度速查和场景估算里的 KV / Workers 部分是纯计算的，
+可以在买服务之前先算清楚撑不撑得住。需要凭据的项会明确标出来。
+
+交互模式的完整说明见 [docs/interactive.md](docs/interactive.md)。
+
+### 2. 准备凭据
 
 **方式一：API Token（推荐，最小权限）**
 
@@ -98,9 +133,7 @@ export CF_API_KEY=xxxxxxxx
 ### 2. 配置
 
 ```bash
-git clone https://github.com/yys9253462-gif/cf-free-max.git
 cd cf-free-max
-
 cp .env.example .env
 # 编辑 .env，填入 CF_API_TOKEN 和 CF_ACCOUNT_ID
 ```
@@ -111,6 +144,8 @@ cp .env.example .env
 ### 3. 验证
 
 ```bash
+node bin/cfm.mjs           # 交互模式，直接看菜单
+# 或者直接跑命令
 node bin/cfm.mjs whoami     # 校验凭据、列出账号与 zone
 node bin/cfm.mjs doctor     # 体检：哪些配置在浪费你的免费额度
 node bin/cfm.mjs usage      # 各类资源剩多少
@@ -143,6 +178,13 @@ CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy ./scripts/cf-quick-check.sh
 ---
 
 ## 命令一览
+
+### 交互模式
+
+| 命令 | 作用 |
+| :--- | :--- |
+| `cfm` | 不带参数进交互菜单（管道/CI 里自动回落到帮助） |
+| `cfm ui` | 显式进交互 |
 
 ### 诊断类（只读，安全）
 
@@ -435,24 +477,50 @@ GraphQL Analytics API 需要额外权限，且**部分产品的用量指标有 1
 ## 开发
 
 ```bash
-node --test "test/**/*.test.mjs"    # 单元测试（25 个）
-node scripts/lint.mjs               # 静态检查（ESM/行尾/遗留标记）
-npm run check                       # 两个都跑
+node --test test/unit.test.mjs test/ui.test.mjs   # 单元 + 交互模块
+node scripts/lint.mjs                              # 静态检查
+node scripts/ui-logic-test.mjs                     # 交互逻辑（纯函数层）
+node scripts/ui-smoke.mjs                          # 真实终端冒烟（需 winpty/script）
+npm run check                                      # lint + 单测 + 交互逻辑
 ```
 
 项目结构：
 
 ```
-bin/cfm.mjs              入口与命令路由
+bin/cfm.mjs              入口与命令路由（无参数 → 交互模式）
 src/lib/cf.mjs           Cloudflare API 客户端（重试/分页/错误解释）
 src/lib/quota.mjs        免费额度常量表（唯一来源）
 src/lib/util.mjs         参数解析、表格、确认、dotenv
+src/lib/prompt.mjs       交互引擎（纯函数层 + 终端层）
+src/cmd/ui.mjs           交互式菜单树
 src/cmd/*.mjs            各命令实现
-scripts/lint.mjs         自研轻量 lint（含 import 符号核对、JSON/YAML 校验）
+scripts/lint.mjs         自研轻量 lint（import 符号核对、JSON/YAML、行尾）
+scripts/ui-logic-test.mjs  交互逻辑测试（43 项）
+scripts/ui-smoke.mjs     真实终端冒烟（27 项）
 scripts/cf-quick-check.sh  零依赖 shell 版快查
 test/unit.test.mjs       单元测试（25 个）
+test/ui.test.mjs         交互模块测试（14 个）
 test/e2e.test.mjs        端到端测试（需真实凭据，默认跳过）
 ```
+
+### 交互功能为什么这样测
+
+真实按键驱动需要 pty（Linux 用 `script`，Windows 用 winpty），CI 里难搭。
+所以交互逻辑被抽成**纯函数**（`handleSelectKey` / `handleMultiSelectKey` /
+`computeRedraw` / `renderSelect`），而 `select()` 内部调用的就是它们 ——
+**测的就是实际运行的代码**，不是另写一份影子实现。
+
+两层分工：
+
+| 脚本 | 覆盖 | 何时跑 |
+| :--- | :--- | :--- |
+| `ui-logic-test.mjs` | 状态转移：方向键回绕、跳过禁用项、数字键索引换算、全选逻辑、重绘行数、菜单结构完整性 | CI（无需终端） |
+| `ui-smoke.mjs` | ANSI 序列、光标控制、真实观感、无凭据守卫、Ctrl+C | 本地（需 pty） |
+
+`ui-logic-test.mjs` 里有一条特别有用：**检查主菜单每一项都有对应的 switch 分支、
+每个二级菜单都有返回项** —— 「加了菜单忘了写分支」这种 bug 只有用户点到才暴露，
+测试能提前抓住。
+
 
 ### 跑真实 API 的端到端测试
 

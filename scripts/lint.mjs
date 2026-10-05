@@ -7,6 +7,15 @@
  *   3. console.log 是否只在 bin/ 与 src/cmd/ 出现（库里不该直接打印）
  *   4. 是否有 TODO / FIXME 遗留
  *   5. 文件行尾必须是 LF（跨平台铁律）
+ *   6. import 的具名符号是否真的被导出（node --check 查不出）
+ *   7. JSON/YAML 文件合法性
+ *
+ * ⚠️ 关于第 5 项为什么重要：
+ *   Windows 上用 PowerShell 的 Set-Content / Out-File 改写文件，
+ *   **无论原文件是什么行尾，都会变成 CRLF**。实测踩过：
+ *   用 `Get-Content -Raw` + `Set-Content -NoNewline` 插入一行后，
+ *   文件凭空多出与插入行数相同的 CR 字节。
+ *   所以**用 PowerShell 改过文件后，必须跑一次本 lint**。
  */
 
 import fs from 'node:fs';
@@ -59,13 +68,14 @@ for (const file of files) {
       problems.push({ level: 'error', file: rel, line: n, msg: '使用了 module.exports，本项目是纯 ESM' });
     }
 
-    // 3. console 只允许在 bin/ 与 cmd/ 与 util.mjs（日志器）与 test/
+    // 3. console 只允许在 bin/ 与 cmd/ 与渲染层与 test/
     const isCli =
       rel.startsWith('bin/') ||
       rel.startsWith('src/cmd/') ||
       rel.startsWith('scripts/') ||
       rel.startsWith('test/') ||
       rel === 'src/lib/util.mjs' || // 日志器本体
+      rel === 'src/lib/prompt.mjs' || // 交互渲染层（banner/清屏本质就是输出）
       rel === 'src/lib/cf.mjs'; // 调试输出
     if (!isCli && /console\.(log|error|warn)\s*\(/.test(code) && !line.trimStart().startsWith('*')) {
       problems.push({ level: 'warn', file: rel, line: n, msg: '库文件里直接使用 console，应改用调用方注入或返回数据' });

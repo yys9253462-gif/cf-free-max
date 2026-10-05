@@ -14,10 +14,14 @@ loadEnvFile();
 
 const argv = process.argv.slice(2);
 const flags = parseArgs(argv);
-const command = flags._[0] ?? 'help';
+
+// 无参数时进交互模式 —— 这是新手最需要的入口。
+// 但在非 TTY（管道/CI）下不该卡住，此时回落到帮助。
+const command = flags._[0] ?? (process.stdin.isTTY ? 'ui' : 'help');
 
 const COMMANDS = {
   help: () => import('../src/cmd/help.mjs'),
+  ui: () => import('../src/cmd/ui.mjs'),
   whoami: () => import('../src/cmd/whoami.mjs'),
   doctor: () => import('../src/cmd/doctor.mjs'),
   quota: () => import('../src/cmd/quota.mjs'),
