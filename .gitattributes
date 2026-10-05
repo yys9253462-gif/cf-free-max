@@ -1,0 +1,58 @@
+# 跨平台行尾声明 —— 这不是可选项，是必需的
+#
+# 为什么需要这个文件：
+#   Windows 上 git 的 core.autocrlf 默认是 true，会让 .sh / .mjs 在
+#   **检出时**变成 CRLF。脚本传到 Linux 后直接报：
+#       bash: $'\r': command not found
+#   而 .mjs 虽然 Node 能容忍 CRLF，但会让 `git diff` 整文件变化，无法 review。
+#
+# 正确写法是按类型声明（而不是简单的 `* text=auto eol=lf`，
+# 那会把二进制之外的整个仓库行尾都改掉，每次 diff 变整文件）。
+
+* text=auto
+
+# 源码与脚本：强制 LF
+*.mjs    text eol=lf
+*.js     text eol=lf
+*.cjs    text eol=lf
+*.ts     text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.toml   text eol=lf
+*.sh     text eol=lf
+*.bash   text eol=lf
+
+# 无扩展名的文本文件要单独声明 ——
+# 只写 `* text=auto` 时 git 会按内容猜测，而 core.autocrlf=true 环境下
+# 这类文件会被检出成 CRLF（实测：.gitignore / LICENSE / .env.example 都中招）。
+.gitignore       text eol=lf
+.gitattributes   text eol=lf
+.env.example     text eol=lf
+LICENSE          text eol=lf
+Dockerfile       text eol=lf
+Makefile         text eol=lf
+
+# Windows 批处理必须是 CRLF，否则某些解析器会出错
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# 二进制：不碰
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.gz     binary
+*.zip    binary
+*.tar    binary
+
+# 锁文件：合并时不要自动解决
+pnpm-lock.yaml  -diff merge=binary
+package-lock.json -diff merge=binary

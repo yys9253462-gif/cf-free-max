@@ -1,0 +1,44 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# 凭据 —— 绝不能提交
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+*.pem
+*.key
+wrangler.toml.local
+.dev.vars
+.dev.vars.*
+.cloudflared/
+credentials.json
+
+# 本工具导出的敏感数据
+dns-export-*.json
+*.dump.sql
+backup/
+exports/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/
+
+# 测试与覆盖率
+coverage/
+.nyc_output/

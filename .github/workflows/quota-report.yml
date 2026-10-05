@@ -1,0 +1,133 @@
+name: 额度日报
+
+# 每天定时检查 Cloudflare 免费额度占用，超过阈值就在 Issue 里留一条记录。
+#
+# 为什么用定时任务而不是「等报错再查」：
+#   免费额度是硬上限，撞到之后请求直接失败。等用户发现异常时，
+#   故障已经发生了。主动巡检能在撞墙前给出预警。
+#
+# 配置：
+#   仓库 Settings → Secrets and variables → Actions 添加：
+#     CF_API_TOKEN     （必需）Account Analytics:Read + Zone:Read
+#     CF_ACCOUNT_ID    （可选，多账号时必需）
+#   再添加变量（Variables，不是 Secret）：
+#     QUOTA_ALERT_THRESHOLD  可选，默认 80（百分比）
+
+on:
+  schedule:
+    # 每天 UTC 23:00（北京时间 7:00）—— 在 UTC 额度重置前 1 小时检查
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 支持手动触发
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 采集用量
+        id: usage
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          set -e
+          if [ -z "$CF_API_TOKEN" ]; then
+            echo "::error::未配置 CF_API_TOKEN，请在仓库 Secrets 中添加"
+            exit 1
+          fi
+          node bin/cfm.mjs usage --json > usage.json
+          echo "--- 采集结果 ---"
+          cat usage.json
+
+      - name: 分析阈值
+        id: analyze
+        env:
+          THRESHOLD: ${{ vars.QUOTA_ALERT_THRESHOLD || '80' }}
+        run: |
+          node - <<'EOF' > report.md
+          import fs from 'node:fs';
+
+          const data = JSON.parse(fs.readFileSync('usage.json', 'utf8'));
+          const threshold = Number(process.env.THRESHOLD || 80);
+
+          const rows = [];
+          const alerts = [];
+
+          function check(label, used, limit) {
+            if (used === null || used === undefined || !limit) return;
+            const pct = (used / limit) * 100;
+            const bar = '█'.repeat(Math.min(20, Math.round(pct / 5))).padEnd(20, '░');
+            rows.push(`| ${label} | ${used.toLocaleString()} | ${limit.toLocaleString()} | \`${bar}\` ${pct.toFixed(1)}% |`);
+            if (pct >= threshold) alerts.push({ label, pct });
+          }
+
+          check('Workers 请求（24h）', data.workers?.total, 100000);
+          const kv = data.kv?.byAction ?? {};
+          check('KV 读（24h）', (kv.read ?? kv.readKey ?? 0), 100000);
+          check('KV 写（24h）', (kv.write ?? kv.writeKey ?? 0), 1000);
+          check('D1 扫描行（24h）', data.d1?.rowsRead, 5000000);
+          check('D1 写入行（24h）', data.d1?.rowsWritten, 100000);
+
+          console.log('# Cloudflare 免费额度日报\n');
+          console.log(`采集时间：${new Date().toISOString()}\n`);
+          console.log('| 指标 | 已用 | 免费上限 | 占用 |');
+          console.log('| :--- | ---: | ---: | :--- |');
+          console.log(...rows);
+
+          if (data.r2?.bytes !== null && data.r2?.bytes !== undefined) {
+            const gb = data.r2.bytes / 1024 ** 3;
+            console.log(`\n**R2 存储**：${gb.toFixed(2)} GB / 10 GB（${((gb / 10) * 100).toFixed(1)}%）`);
+            if (gb / 10 * 100 >= threshold) alerts.push({ label: 'R2 存储', pct: (gb / 10) * 100 });
+          }
+
+          if (alerts.length) {
+            console.log(`\n## ⚠️ 超过 ${threshold}% 告警线\n`);
+            for (const a of alerts) console.log(`- **${a.label}**：${a.pct.toFixed(1)}%`);
+            console.log('\n建议：');
+            console.log('- KV 写超限 → 改用 D1（`cfm kv budget <ns>` 有分析）');
+            console.log('- D1 扫描行超限 → 检查索引：`cfm d1 explain <db> --sql "..."`');
+            console.log('- R2 存储超限 → 设置生命周期：`cfm r2 lifecycle <bucket> --expire-days 30`');
+            fs.writeFileSync('has-alert', '1');
+          } else {
+            console.log(`\n✔ 全部指标低于 ${threshold}% 告警线。`);
+            fs.writeFileSync('has-alert', '');
+          }
+          EOF
+
+      - name: 写入 Job 摘要
+        run: cat report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: 有告警时创建/更新 Issue
+        if: hashFiles('has-alert') != '' && hashFiles('has-alert') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if [ ! -s has-alert ]; then
+            echo "无告警，跳过。"
+            exit 0
+          fi
+
+          TITLE="Cloudflare 免费额度告警 - $(date -u +%Y-%m-%d)"
+          BODY=$(cat report.md)
+
+          # 查找是否已有本周期的告警 Issue
+          EXISTING=$(gh issue list --label quota-alert --state open --limit 1 --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "已追加评论到 Issue #$EXISTING"
+          else
+            gh label create quota-alert --description "Cloudflare 免费额度告警" --color FFA500 2>/dev/null || true
+            gh issue create --title "$TITLE" --body "$BODY" --label quota-alert
+            echo "已创建告警 Issue"
+          fi

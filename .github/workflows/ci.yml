@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 最小权限：CI 只需要读代码
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 测试（Node ${{ matrix.node }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 检查行尾（跨平台铁律）
+        run: |
+          set -e
+          bad=0
+          while IFS= read -r f; do
+            if grep -qU $'\r' "$f"; then
+              echo "::error file=$f::包含 CRLF 行尾，跨平台仓库必须用 LF"
+              bad=1
+            fi
+          done < <(git ls-files '*.mjs' '*.js' '*.json' '*.yml' '*.yaml' '*.md' '*.sh')
+          exit $bad
+
+      - name: 静态检查
+        run: node scripts/lint.mjs
+
+      - name: 单元测试
+        run: node --test "test/**/*.test.mjs"
+
+      - name: 验证所有命令可加载（不调用 API）
+        run: |
+          set -e
+          for cmd in help quota whoami doctor usage dns cache zone r2 pages workers kv d1 tunnel audit; do
+            echo "→ 检查 $cmd"
+            node bin/cfm.mjs "$cmd" --help >/dev/null 2>&1 || \
+            node -e "import('./src/cmd/$cmd.mjs').catch(e => { console.error('$cmd 加载失败:', e.message); process.exit(1) })"
+          done
+
+      - name: 验证无凭据时给出清晰错误
+        run: |
+          set -e
+          unset CF_API_TOKEN CF_API_KEY CF_API_EMAIL || true
+          out=$(node bin/cfm.mjs whoami 2>&1 || true)
+          echo "$out"
+          if ! echo "$out" | grep -q "未找到 Cloudflare 凭据"; then
+            echo "::error::无凭据时应给出明确提示"
+            exit 1
+          fi
+
+  windows:
+    name: 测试（Windows）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 静态检查
+        run: node scripts/lint.mjs
+
+      - name: 单元测试
+        run: node --test "test/**/*.test.mjs"
+
+      # Windows 上最容易出的问题是路径分隔符与编码
+      - name: 验证路径处理
+        run: node bin/cfm.mjs quota workers
+        shell: pwsh
