@@ -15,10 +15,11 @@
     "test:unit": "node --test test/unit.test.mjs",
     "test:e2e": "node --test test/e2e.test.mjs",
     "lint": "node scripts/lint.mjs",
-    "check": "node scripts/lint.mjs && node --test test/unit.test.mjs test/ui.test.mjs test/spinner.test.mjs && node scripts/ui-logic-test.mjs",
+    "check": "node scripts/lint.mjs && node --test test/unit.test.mjs test/ui.test.mjs test/spinner.test.mjs && node scripts/ui-logic-test.mjs && node scripts/ui-audit.mjs",
     "test:ui": "node scripts/ui-logic-test.mjs",
     "test:pty": "node scripts/ui-smoke.mjs",
-    "test:spinner": "node --test test/spinner.test.mjs"
+    "test:spinner": "node --test test/spinner.test.mjs",
+    "audit:ui": "node scripts/ui-audit.mjs"
   },
   "keywords": [
     "cloudflare",

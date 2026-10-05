@@ -50,6 +50,9 @@ jobs:
       - name: 交互逻辑测试（纯函数层，无需终端）
         run: node scripts/ui-logic-test.mjs
 
+      - name: UI 走查（菜单结构 / 危险操作确认 / 输入校验）
+        run: node scripts/ui-audit.mjs
+
       - name: 验证所有命令可加载（捕捉 node --check 查不出的未定义导入）
         run: |
           set -e
@@ -123,6 +126,9 @@ jobs:
 
       - name: 交互逻辑测试（纯函数层，无需终端）
         run: node scripts/ui-logic-test.mjs
+
+      - name: UI 走查（菜单结构 / 危险操作确认 / 输入校验）
+        run: node scripts/ui-audit.mjs
 
       # Windows 上最容易出的问题是路径分隔符与编码
       - name: 验证路径处理

@@ -115,6 +115,33 @@ export async function run({ client, flags }) {
 
   try {
     await mainMenu(p, client, flags);
+  } catch (err) {
+    // 顶层兜底：任何没被菜单内部处理的异常都在这里收住。
+    //
+    // 为什么需要：
+    //   如果不捕获，用户会看到一整屏 Node 堆栈（file:///F:/... at async ...），
+    //   完全不知道发生了什么、该怎么办。
+    //   这里转成可读的提示 + 恢复终端状态。
+    console.log('');
+    console.log('');
+    log.err('交互过程中出现未预期的错误');
+    console.log('');
+    if (err instanceof CFError) {
+      console.log(`  ${err.toString().split('\n').join('\n  ')}`);
+    } else {
+      console.log(`  ${err?.message ?? String(err)}`);
+    }
+    console.log('');
+    log.dim('这不是致命错误，工具可以继续用。如果反复出现，请反馈：');
+    log.dim('  https://github.com/yys9253462-gif/cf-free-max/issues');
+    console.log('');
+    if (process.env.CFM_DEBUG) {
+      console.log(err?.stack ?? '');
+    } else {
+      log.dim('（加 CFM_DEBUG=1 可看到完整堆栈）');
+    }
+    console.log('');
+    await p.pause('按回车返回');
   } finally {
     p.close();
   }
@@ -682,6 +709,9 @@ async function runOnZone(p, client, cmd, sub, extraFlags = {}) {
 // ---------- DNS ----------
 
 async function dnsMenu(p, client) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('DNS 记录');
@@ -770,6 +800,9 @@ async function dnsMenu(p, client) {
 // ---------- 缓存 ----------
 
 async function cacheMenu(p, client) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('缓存管理');
@@ -836,14 +869,38 @@ async function cacheMenu(p, client) {
           await invoke('cache', { client, flags: { _: ['cache', 'purge', zc], all: true, yes: true } });
         }
       } else if (mode === 'urls') {
-        const urls = await p.input('输入 URL（逗号分隔，最多 30 个）');
+        const urls = await p.input('输入 URL（逗号分隔，最多 30 个）', {
+          validate: (v) => {
+            if (!v.trim()) return '至少输入一个 URL';
+            const list = v.split(',').map((x) => x.trim()).filter(Boolean);
+            if (!list.length) return '至少输入一个 URL';
+            if (list.length > 30) return `一次最多 30 个，当前给了 ${list.length} 个`;
+            const bad = list.find((u) => !/^https?:\/\//i.test(u));
+            if (bad) return `格式不对：${bad}（需要以 http:// 或 https:// 开头）`;
+            return null;
+          },
+        });
         if (urls) {
           await invoke('cache', { client, flags: { _: ['cache', 'purge', zc], urls } });
+        } else {
+          log.info('没有输入 URL，已取消。');
         }
-      } else {
-        const hosts = await p.input('输入主机名（逗号分隔）');
+      } else if (mode === 'hosts') {
+        // 显式分支而不是 else 兜底 ——
+        // 用 else 的话，以后加新选项会被静默当成「按主机名」处理。
+        const hosts = await p.input('输入主机名（逗号分隔）', {
+          validate: (v) => {
+            if (!v.trim()) return '至少输入一个主机名';
+            const list = v.split(',').map((x) => x.trim()).filter(Boolean);
+            const bad = list.find((h) => !/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(h));
+            if (bad) return `格式不对：${bad}（应该是域名，如 www.example.com）`;
+            return null;
+          },
+        });
         if (hosts) {
           await invoke('cache', { client, flags: { _: ['cache', 'purge', zc], hosts } });
+        } else {
+          log.info('没有输入主机名，已取消。');
         }
       }
       await p.pause();
@@ -862,6 +919,9 @@ async function cacheMenu(p, client) {
 // ---------- 域名设置 ----------
 
 async function zoneMenu(p, client) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('域名设置');
@@ -987,11 +1047,36 @@ async function r2Menu(p, client, flags) {
         validate: (v) => (/^\d+$/.test(v) && Number(v) > 0 ? null : '请输入正整数'),
       });
       const prefix = await p.input('只清理某个前缀下的对象？（留空表示全部）', { default: '' });
+
+      // ⚠️ 生命周期规则会**真实删除对象**，必须让用户看清再确认。
+      //    原来这里直接 yes:true 跳过确认 —— 用户输完天数规则就生效了，
+      //    根本没机会确认「到底会删什么」。这是危险的设计。
+      console.log('');
+      console.log(`  ${c.bold}将要设置的规则${c.reset}`);
+      console.log('');
+      console.log(`    桶        ${b}`);
+      console.log(`    删除条件  对象创建后超过 ${days} 天`);
+      console.log(`    范围      ${prefix ? `仅前缀「${prefix}」下的对象` : c.yellow + '整个桶的所有对象' + c.reset}`);
+      console.log('');
+      if (!prefix) {
+        log.warn('范围为整个桶 —— 超过期限的对象会被永久删除，且不可恢复。');
+      }
+      console.log('');
+      log.dim('这是防止 R2 存储费超标最有效的手段，但请确认范围正确。');
+      console.log('');
+
+      if (!(await p.confirm(`确认设置「${days} 天后删除${prefix ? `（前缀 ${prefix}）` : ''}」？`, false))) {
+        log.info('已取消。');
+        console.log('');
+        await p.pause();
+        continue;
+      }
+
       const args = { _: ['r2', 'lifecycle', b], 'expire-days': days, yes: true };
       if (prefix) args.prefix = prefix;
       await invoke('r2', { client, flags: args });
       console.log('');
-      log.dim('这是防止 R2 存储费超标最有效的手段 —— 让垃圾数据自己消失。');
+      log.dim('提示：规则立即生效，但对象删除是按天批量执行的，不会立刻消失。');
       await p.pause();
       continue;
     }
@@ -1033,7 +1118,12 @@ async function r2Menu(p, client, flags) {
         { label: '返回', value: null },
       ]);
       if (!b) continue;
-      const host = await p.input('自定义域名（如 r2.example.com）');
+      const host = await p.input('自定义域名（如 r2.example.com）', {
+        validate: (v) =>
+          /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(v.trim())
+            ? null
+            : '格式不对，应该是域名形式，如 r2.example.com',
+      });
       await invoke('r2', { client, flags: { _: ['r2', 'domain', b], add: host } });
       await p.pause();
       continue;
@@ -1048,6 +1138,9 @@ async function r2Menu(p, client, flags) {
 // ---------- Workers ----------
 
 async function workersMenu(p, client, flags) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('Workers');
@@ -1076,6 +1169,9 @@ async function workersMenu(p, client, flags) {
 // ---------- KV ----------
 
 async function kvMenu(p, client, flags) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('Workers KV');
@@ -1150,6 +1246,9 @@ async function kvMenu(p, client, flags) {
 // ---------- D1 ----------
 
 async function d1Menu(p, client, flags) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('D1 数据库');
@@ -1198,10 +1297,18 @@ async function d1Menu(p, client, flags) {
     if (choice === 'index') {
       await invoke('d1', { client, flags: { ...flags, _: ['d1', 'index', db] } });
     } else if (choice === 'explain') {
-      const sql = await p.input('输入一条典型 SELECT 查询');
+      const sql = await p.input('输入一条典型 SELECT 查询', {
+        validate: (v) => {
+          if (!v.trim()) return '不能为空';
+          if (!/^\s*select\b/i.test(v)) return '这里只做查询分析，请输入 SELECT 语句';
+          return null;
+        },
+      });
       await invoke('d1', { client, flags: { ...flags, _: ['d1', 'explain', db], sql } });
     } else if (choice === 'query') {
-      const sql = await p.input('输入 SQL');
+      const sql = await p.input('输入 SQL', {
+        validate: (v) => (v.trim() ? null : '不能为空'),
+      });
       console.log('');
       const isWrite = /^\s*(insert|update|delete|create|drop|alter|replace)\b/i.test(sql);
       if (isWrite) {
@@ -1217,6 +1324,9 @@ async function d1Menu(p, client, flags) {
 // ---------- Pages ----------
 
 async function pagesMenu(p, client, flags) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('Cloudflare Pages');
@@ -1264,6 +1374,9 @@ async function pagesMenu(p, client, flags) {
 // ---------- Tunnel ----------
 
 async function tunnelMenu(p, client, flags) {
+  // 入口处检查凭据 —— 避免用户点进来才发现用不了。
+  // 这些菜单的每个操作都要访问 Cloudflare API，没有凭据进不去。
+  if (!(await ensureCreds(p, client))) return;
   while (true) {
     clearScreen();
     banner('Cloudflare Tunnel', '不用开放任何入站端口就能暴露内网服务');
@@ -1310,6 +1423,17 @@ async function tunnelMenu(p, client, flags) {
       { label: '返回', value: null },
     ]);
     if (!t) continue;
+
+    // 白名单校验：choice 是直接透传给命令的子命令名。
+    // 用白名单而不是直接传 —— 以后菜单加了新选项但命令没实现时，
+    // 会明确报错而不是静默失败。
+    const TUNNEL_SUBS = ['connections', 'ingress', 'setup'];
+    if (!TUNNEL_SUBS.includes(choice)) {
+      log.err(`内部错误：未知的子命令「${choice}」`);
+      log.dim('这是脚本的 bug，请反馈。');
+      await p.pause();
+      continue;
+    }
 
     clearScreen();
     await invoke('tunnel', { client, flags: { ...flags, _: ['tunnel', choice, t] } });
@@ -1497,6 +1621,12 @@ async function helpView(p) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function deployMenu(p, client) {
+  // ⚠️ deployMenu 不做入口凭据检查 ——
+  //    这里的「查看配置与状态」「环境体检」是纯本地只读操作，
+  //    没有凭据也能用。只有「部署」才需要认证。
+  //    加统一检查会把这两个有用的功能一起挡掉。
+  //
+  //    需要凭据的按钮在下面单独判断。
   while (true) {
     clearScreen();
     banner('部署站点', '发布到 Cloudflare Pages');
