@@ -42,7 +42,15 @@ set "NODE_URL=https://nodejs.org/dist/v%NODE_VERSION%/%NODE_ZIP%"
 set "NODE_MIRROR=https://npmmirror.com/mirrors/node/v%NODE_VERSION%/%NODE_ZIP%"
 
 REM 首次运行标记 —— 用来判断要不要走环境检测流程
-set "FIRST_RUN_FLAG=%CFM_HOME%\.initialized"
+REM 首次运行标记 —— 存**版本号**，不只是「跑过了」。
+REM
+REM ?? 为什么带版本号：
+REM     原来只判断「文件在不在」，结果改了首次流程后，
+REM     之前跑过的用户永远看不到新向导（实测踩过 —— 用户反馈
+REM     「点启动还是老界面」）。
+REM     带上版本号，版本变了就重走向导。
+set "CFM_VERSION=1.0.0"
+set "FIRST_RUN_FLAG=%CFM_HOME%\.initialized-%CFM_VERSION%"
 
 REM 便携版 Node 如果已存在，直接加进 PATH，后面 where node 就能找到
 if exist "%NODE_EXE%" set "PATH=%NODE_DIR%;%PATH%"
@@ -101,6 +109,10 @@ if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :incomplete
 if not exist "%SCRIPT_DIR%\scripts\check-env.ps1" goto :incomplete
 if not exist "%SCRIPT_DIR%\config\sites.json" goto :incomplete
 
+
+REM 清掉**旧版**的标记文件（不带版本号的那种），
+REM 否则升级后旧标记还在，逻辑会乱。
+del "%CFM_HOME%\.initialized" >nul 2>&1
 
 if exist "%FIRST_RUN_FLAG%" goto :welcome
 if not exist "%PS1_DIR%\check-env.ps1" goto :welcome
@@ -225,7 +237,7 @@ echo.
 REM 写标记文件，下次不再走首次流程
 REM 写标记文件，下次不再走首次流程
 if not exist "%CFM_HOME%" mkdir "%CFM_HOME%" >nul 2>&1
-echo initialized at %DATE% %TIME% > "%FIRST_RUN_FLAG%" 2>nul
+echo %CFM_VERSION% initialized at %DATE% %TIME% > "%FIRST_RUN_FLAG%" 2>nul
 echo.
 echo  初始化完成，正在进入主界面 ...
 ping -n 3 127.0.0.1 >nul 2>&1
