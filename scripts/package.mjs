@@ -45,6 +45,20 @@ const INCLUDE = [
   '使用说明.txt',
 ];
 
+/**
+ * 打包时替换的文件 —— 源文件不进包，只放「脱敏后的模板」。
+ *
+ * 为什么 config/sites.json 要这样处理：
+ *   它包含用户的真实仓库名、Pages 项目名、自定义域名、D1 database_id。
+ *   这些是**部署配置**而非代码 —— 打包分享等于公开自己的站点架构。
+ *
+ *   所以包里放 sites.example.json 的内容，文件名仍叫 sites.json，
+ *   用户拿到后按提示改成自己的值。既不泄漏，又不影响开箱可用性。
+ */
+const REPLACE_FILES = [
+  { src: path.join('config', 'sites.example.json'), dest: path.join('config', 'sites.json') },
+];
+
 /** 绝不打包的东西（即使误加进 INCLUDE 也会被拦下） */
 const FORBIDDEN = [
   '.env',
@@ -54,6 +68,9 @@ const FORBIDDEN = [
   'dns-export',
   '.env.local',
   'credentials',
+  'sites.json', // 真实部署配置（含域名/D1 id），包里只放 sites.example.json
+  '.sites', // clone 下来的仓库
+  '.wrangler', // wrangler 本地状态
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -81,8 +98,33 @@ function audit() {
     { name: 'AWS Access Key', re: /\bAKIA[0-9A-Z]{16}\b/, skip: /placeholder|xxx/i },
     { name: 'GitHub Token', re: /\bgh[pousr]_[A-Za-z0-9]{20,}/, skip: /placeholder|xxx/i },
     { name: '私钥文件', re: /-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/, skip: /never|不要|示例/i },
-    { name: '真实邮箱', re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.|invalid\.)[A-Za-z0-9.-]+\.(com|net|org|cn|io|dev)\b/, skip: /noreply|example|users\.noreply\.github|@example|@test\./i },
+    {
+      name: '真实邮箱',
+      // 排除项说明（都是实测踩过的误报）：
+      //   · example/test/invalid/localhost —— 文档示例
+      //   · git@github.com —— 标准 SSH 写法，不是个人信息
+      //   · noreply/api/smtp —— 技术性地址
+      re: /\b[A-Za-z0-9._%+-]+@(?!example\.|test\.|invalid\.|localhost)[A-Za-z0-9.-]+\.(?:com|net|org|cn|io|dev)\b/,
+      skip: /noreply|example|@test\.|git@|@github\.com|users\.noreply|your-|placeholder|@host\b|api\.|smtp\./i,
+    },
     { name: '中国手机号', re: /\b1[3-9]\d{9}\b/, skip: /placeholder|示例/ },
+    // 真实域名：分享出去等于公开自己的站点架构。
+    // 域名清单从环境变量读，**不硬编码在源码里** ——
+    // 否则「防泄漏的规则本身」就成了泄漏源（实测踩过）。
+    ...(process.env.CFM_PRIVATE_DOMAINS
+      ? [
+          {
+            name: '真实站点域名',
+            re: new RegExp(
+              String.raw`\b(?:[a-z0-9-]+\.)?(?:${process.env.CFM_PRIVATE_DOMAINS.split(',').map((d) => d.trim().replace(/\./g, '\\.')).join('|')})\b`,
+              'i',
+            ),
+            skip: /example|your-|placeholder/i,
+          },
+        ]
+      : []),
+    // D1 database_id 是 uuid，泄漏了别人能直接定位到你的库
+    { name: 'D1 database_id', re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, skip: /00000000-0000|example/i },
   ];
 
   /** 可疑但不阻断（需人工确认） */
@@ -110,7 +152,10 @@ function audit() {
     /cfargotunnel\.com/,
     /nodejs\.org/,
     /npmmirror\.com/,
-    /github\.com\/yys9253462-gif\/cf-free-max/, // 项目自身地址
+    // 项目自身地址 —— 用户**明确确认**可以公开（方便别人找更新）。
+    // 这不是漏检，是已确认的例外。
+    /github\.com\/yys9253462-gif\/cf-free-max/,
+    /\byys9253462-gif\b/, // GitHub 用户名，同上
     /github\.com\/cloudflare/,
     /resend\.com/,
     /1\.2\.3\.4/, // 文档里的示例 IP
@@ -174,17 +219,20 @@ function audit() {
   // 检查禁止打包的文件是否存在
   // 注意：.git 不报 —— 它是正常的版本控制目录，打包时会排除，
   // 且它下面确实含作者邮箱（那是 GitHub 公开信息，不是泄漏）。
-  for (const f of FORBIDDEN) {
-    if (f === '.git') continue;
+  // 只检查「不该存在」的文件。
+  // sites.json / .sites / .wrangler 是**正常存在**的（源目录里本来就有），
+  // 它们只是不进包 —— 由 copyRecursive 的 FORBIDDEN 过滤负责，
+  // 不在这里报警，否则每次打包都会误报。
+  const MUST_NOT_EXIST = ['.env', '.env.local', 'credentials'];
+  for (const f of MUST_NOT_EXIST) {
     const p = path.join(ROOT, f);
     if (fs.existsSync(p)) {
-      const isEnv = p.endsWith('.env');
       report.push({
-        level: isEnv ? 'block' : 'warn',
+        level: 'block',
         file: f,
         line: 0,
-        rule: isEnv ? '存在 .env（含真实凭据）' : '存在不应打包的文件',
-        sample: isEnv ? '会被 .gitignore 忽略，但打包脚本要确保排除' : '',
+        rule: `源目录存在 ${f}（含真实凭据）`,
+        sample: '它不会被 .gitignore 之外的机制保护，确认打包时已排除',
       });
     }
   }
@@ -375,6 +423,35 @@ function build() {
     }
     copyRecursive(src, path.join(outDir, item), stats);
     console.log(`  + ${item}`);
+  }
+
+  // 处理需要脱敏的文件：源文件不进包，只放模板
+  for (const { src: srcRel, dest: destRel } of REPLACE_FILES) {
+    const srcPath = path.join(ROOT, srcRel);
+    const destPath = path.join(outDir, destRel);
+
+    if (!fs.existsSync(srcPath)) {
+      console.log(`  \x1b[33m⚠ 模板不存在：${srcRel}\x1b[0m`);
+      continue;
+    }
+
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.copyFileSync(srcPath, destPath);
+    console.log(`  + ${destRel}  \x1b[2m（来自模板 ${srcRel}）\x1b[0m`);
+    stats.files++;
+    stats.bytes += fs.statSync(destPath).size;
+  }
+
+  // 明确排除真实配置（防止误打包）
+  const realConfig = path.join(outDir, 'config', 'sites.json');
+  const hasTemplate = fs.existsSync(path.join(ROOT, 'config', 'sites.example.json'));
+  if (hasTemplate && fs.existsSync(realConfig)) {
+    // 已被模板覆盖，没问题；但要确认内容确实是模板而非真实配置
+    const content = fs.readFileSync(realConfig, 'utf8');
+    if (!content.includes('your-github-username')) {
+      console.log(`  \x1b[31m✘ config/sites.json 不是模板内容，可能包含真实配置！\x1b[0m`);
+      process.exit(1);
+    }
   }
 
   // 校验 .bat 编码与行尾

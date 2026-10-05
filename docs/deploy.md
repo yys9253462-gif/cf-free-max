@@ -32,9 +32,9 @@ cfm deploy --only blog,nav  # 逗号分隔
 {
   "id": "pan",
   "label": "网盘",
-  "repo": "isoziyuan-pan",
-  "project": "isoziyuan-pan",
-  "domain": "pan.ailxw.com",
+  "repo": "your-netdisk-repo",
+  "project": "your-netdisk-pages",
+  "domain": "pan.example.com",
   "protected": true,
   "protectedReason": "该网盘正在正常服务，切勿重新部署覆盖。"
 }
@@ -65,9 +65,9 @@ cfm deploy --check-online
 ```
 id    │ 名称     │ 域名          │ 访问状态          │
 ───────┼──────────┼───────────────┼───────────────────┤
-blog  │ 静态博客 │ blog.u88b.com │ HTTP 200 52.78 KB │
-nav   │ 静态导航 │ ailxw.com     │ HTTP 200 4.47 KB  │
-🔒 pan │ 网盘     │ pan.ailxw.com │ HTTP 200 2.67 KB  │
+blog  │ 静态博客 │ blog.example.com  │ HTTP 200 52.78 KB │
+nav   │ 静态导航 │ nav.example.com   │ HTTP 200 4.47 KB  │
+🔒 pan │ 网盘     │ pan.example.com   │ HTTP 200 2.67 KB  │
 
 其中 1 个是受保护站点（pan）：只做线上巡检，不参与部署。
 ```

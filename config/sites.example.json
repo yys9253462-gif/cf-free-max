@@ -1,0 +1,90 @@
+{
+  "repoOwner": "your-github-username",
+  "workspace": "",
+
+  "_readme": [
+    "这是站点部署的配置模板。复制为 sites.json 后改成你自己的值。",
+    "",
+    "字段说明：",
+    "  repoOwner   GitHub 用户名或组织名",
+    "  workspace   仓库 clone 到哪里。留空 = 本项目下的 .sites/",
+    "  sites[]     每个站点一项",
+    "",
+    "站点字段：",
+    "  id          命令行短名（cfm deploy --only blog）",
+    "  label       显示名",
+    "  repo        GitHub 仓库名（不含 owner）",
+    "  project     Cloudflare Pages 项目名",
+    "  domain      自定义域名（可选，用于显示和线上检查）",
+    "  type        build（需构建）或 static（纯静态）",
+    "  buildCommand  构建命令，type=build 时必填",
+    "  outputDir   构建产物目录，相对仓库根。纯静态站通常填 \".\"",
+    "  branch      分支名，默认 main",
+    "  bindings    D1 / R2 / KV 绑定（部署前会检查是否存在）",
+    "  patches     构建补丁，见 docs/deploy.md",
+    "  protected   🔒 设为 true 则只读保护：不 clone / 不构建 / 不部署",
+    "              必须同时写 protectedReason 说明原因"
+  ],
+
+  "sites": [
+    {
+      "id": "blog",
+      "label": "静态博客",
+      "repo": "your-blog-repo",
+      "project": "your-blog-pages",
+      "domain": "blog.example.com",
+      "type": "build",
+      "buildCommand": "npm run build",
+      "installCommand": "npm install",
+      "outputDir": "dist",
+      "branch": "main",
+      "description": "Astro / Next / Vite 这类构建型站点",
+      "bindings": [],
+      "patches": []
+    },
+    {
+      "id": "nav",
+      "label": "静态导航",
+      "repo": "your-nav-repo",
+      "project": "your-nav-pages",
+      "domain": "nav.example.com",
+      "type": "static",
+      "buildCommand": "",
+      "installCommand": "",
+      "outputDir": ".",
+      "branch": "main",
+      "description": "纯静态 + Pages Functions",
+      "bindings": [
+        {
+          "type": "d1",
+          "binding": "NAV_DB",
+          "name": "your-nav-db",
+          "id": "00000000-0000-0000-0000-000000000000",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "id": "protected-example",
+      "label": "受保护的站点示例",
+      "repo": "your-live-repo",
+      "project": "your-live-pages",
+      "domain": "live.example.com",
+      "type": "static",
+      "outputDir": ".",
+      "branch": "main",
+      "protected": true,
+      "protectedReason": "该站点正在对外服务，切勿重新部署覆盖。脚本只做只读检查。",
+      "description": "🔒 只读保护示例：正在服务的站点应这样标记",
+      "bindings": []
+    }
+  ],
+
+  "options": {
+    "autoInstallDeps": true,
+    "cleanInstall": false,
+    "verifyAfterDeploy": false,
+    "deployTimeoutSec": 600,
+    "buildTimeoutSec": 900
+  }
+}
