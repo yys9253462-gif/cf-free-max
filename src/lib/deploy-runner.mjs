@@ -14,6 +14,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { log, color as c } from '../lib/util.mjs';
 import { assessBuildOutput } from './deploy-patches.mjs';
+import { spinner, heartbeat } from './spinner.mjs';
 
 /** 每一步的执行结果 */
 const OK = 'ok';
@@ -306,9 +307,13 @@ export async function stepClone(site, cfg, opts = {}) {
 
   if (fs.existsSync(path.join(dir, '.git'))) {
     // 已存在：拉取更新（不 force，不覆盖本地改动）
-    log.info(`仓库已存在，拉取更新：${site.repo}`);
-
+    const sp = spinner(`拉取更新 ${site.repo}`);
     const fetch = await runCommand('git', ['fetch', 'origin', site.branch], { cwd: dir, timeout: 120000 });
+    if (fetch.code !== 0) {
+      sp.fail('拉取失败');
+    } else {
+      sp.stop();
+    }
     if (fetch.code !== 0) {
       return { status: FAIL, error: `git fetch 失败\n${(fetch.stderr || fetch.stdout).slice(-500)}`, dir };
     }
@@ -345,12 +350,16 @@ export async function stepClone(site, cfg, opts = {}) {
     fs.rmdirSync(dir);
   }
 
-  log.info(`克隆仓库：${site.repo}`);
   fs.mkdirSync(cfg.workspace, { recursive: true });
 
+  const sp = spinner(`正在克隆 ${site.repo}`);
+  const hb = heartbeat('克隆中，网络慢时可能需要几分钟', 20000);
   const clone = await runCommand('git', ['clone', '--branch', site.branch, '--depth', '1', url, dir], {
     timeout: 300000,
   });
+  hb.stop();
+  if (clone.code !== 0) sp.fail(`克隆 ${site.repo} 失败`);
+  else sp.stop(`已克隆 ${site.repo}`);
 
   if (clone.code !== 0) {
     const msg = (clone.stderr || clone.stdout).slice(-600);
@@ -418,8 +427,8 @@ export async function stepBuild(site, cfg, opts = {}) {
     const useManager = pmProbe.available ? pm.manager : 'npm';
     const installArgs = cfg.options.cleanInstall && useManager === 'npm' ? ['ci'] : pm.installArgs;
 
-    log.info(`安装依赖（${useManager}，${pm.reason}）`);
-    log.dim('  首次安装可能要几分钟，请耐心等待 ...');
+    const sp = spinner(`安装依赖（${useManager}，${pm.reason}）`);
+    const hb = heartbeat('安装中，依赖多时可能要几分钟', 25000);
 
     const install = await runCommand(useManager, installArgs, {
       cwd: dir,
@@ -428,7 +437,10 @@ export async function stepBuild(site, cfg, opts = {}) {
       quiet: true,
     });
 
+    hb.stop();
+
     if (install.code !== 0) {
+      sp.fail('依赖安装失败');
       // 从完整输出里找真正的错误行，而不是只取末尾的进度条
       const realError = extractError(install.stdout + install.stderr);
       const tailLines = (install.tail ?? []).slice(-15).join('\n    ');
@@ -457,9 +469,13 @@ export async function stepBuild(site, cfg, opts = {}) {
     }
   }
 
+  // 走到这里说明安装成功
+  if (typeof sp !== 'undefined' && sp) sp.stop();
+
   // 构建
   const [cmd, ...cmdArgs] = site.buildCommand.split(/\s+/);
-  log.info(`构建：${site.buildCommand}`);
+  const buildSp = spinner(`构建：${site.buildCommand}`);
+  const buildHb = heartbeat('构建中', 20000);
 
   const build = await runCommand(cmd, cmdArgs, {
     cwd: dir,
@@ -467,6 +483,7 @@ export async function stepBuild(site, cfg, opts = {}) {
     quiet: true,
   });
 
+  buildHb.stop();
   const outDir = path.join(dir, site.outputDir);
 
   if (build.code !== 0) {
@@ -479,7 +496,7 @@ export async function stepBuild(site, cfg, opts = {}) {
     const assessment = assessBuildOutput(outDir);
 
     if (tolerate && assessment.complete) {
-      log.warn(`构建报错，但产物完整（${assessment.reason}）`);
+      buildSp.warn(`构建报错但产物完整（${assessment.reason}）`);
       log.dim('  patches 里启用了 tolerate-partial-build，继续部署');
       const errLines = extractError(build.stdout + build.stderr);
       if (errLines) {
@@ -530,6 +547,7 @@ export async function stepBuild(site, cfg, opts = {}) {
   }
 
   const count = countFiles(outDir);
+  buildSp.stop(`构建完成（${count} 个文件）`);
   return { status: OK, note: `构建完成（${count} 个文件）`, outDir };
 }
 
@@ -592,12 +610,18 @@ export async function stepDeploy(site, cfg, opts = {}) {
     return { status: SKIP, note: `[dry-run] 将执行：${wranglerCmd} ${args.join(' ')}` };
   }
 
+  const sp = spinner(`正在上传到 Pages（${site.project}）`);
+  const hb = heartbeat('上传中', 20000);
+
   const result = await runCommand(wranglerCmd, args, {
     cwd: dir,
     env,
     timeout: cfg.options.deployTimeoutSec * 1000,
     quiet: true,
   });
+  hb.stop();
+
+  if (result.code !== 0) sp.fail("上传失败");
 
   const combined = result.stdout + result.stderr;
 

@@ -11,13 +11,14 @@
   },
   "scripts": {
     "start": "node bin/cfm.mjs",
-    "test": "node --test test/unit.test.mjs test/ui.test.mjs test/e2e.test.mjs",
+    "test": "node --test test/unit.test.mjs test/ui.test.mjs test/spinner.test.mjs test/e2e.test.mjs",
     "test:unit": "node --test test/unit.test.mjs",
     "test:e2e": "node --test test/e2e.test.mjs",
     "lint": "node scripts/lint.mjs",
-    "check": "node scripts/lint.mjs && node --test test/unit.test.mjs test/ui.test.mjs && node scripts/ui-logic-test.mjs",
+    "check": "node scripts/lint.mjs && node --test test/unit.test.mjs test/ui.test.mjs test/spinner.test.mjs && node scripts/ui-logic-test.mjs",
     "test:ui": "node scripts/ui-logic-test.mjs",
-    "test:pty": "node scripts/ui-smoke.mjs"
+    "test:pty": "node scripts/ui-smoke.mjs",
+    "test:spinner": "node --test test/spinner.test.mjs"
   },
   "keywords": [
     "cloudflare",

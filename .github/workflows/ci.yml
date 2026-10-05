@@ -45,7 +45,7 @@ jobs:
       # 显式列举测试文件：Node 18/20 不支持 `node --test "test/**/*.test.mjs"`
       # 这种 glob 展开，会当成字面路径报 "Could not find"。实测踩过。
       - name: 单元测试
-        run: node --test test/unit.test.mjs test/ui.test.mjs test/e2e.test.mjs
+        run: node --test test/unit.test.mjs test/ui.test.mjs test/spinner.test.mjs test/e2e.test.mjs
 
       - name: 交互逻辑测试（纯函数层，无需终端）
         run: node scripts/ui-logic-test.mjs
@@ -119,7 +119,7 @@ jobs:
       # 显式列举测试文件：Node 18/20 不支持 `node --test "test/**/*.test.mjs"`
       # 这种 glob 展开，会当成字面路径报 "Could not find"。实测踩过。
       - name: 单元测试
-        run: node --test test/unit.test.mjs test/ui.test.mjs test/e2e.test.mjs
+        run: node --test test/unit.test.mjs test/ui.test.mjs test/spinner.test.mjs test/e2e.test.mjs
 
       - name: 交互逻辑测试（纯函数层，无需终端）
         run: node scripts/ui-logic-test.mjs

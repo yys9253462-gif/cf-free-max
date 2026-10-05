@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import { log, table, color as c, confirm, humanBytes } from '../lib/util.mjs';
 import { loadConfig, inspectRepo, ConfigError } from '../lib/deploy-config.mjs';
 import { applyPatches, PATCHES } from '../lib/deploy-patches.mjs';
+import { progressBar } from '../lib/spinner.mjs';
 import {
   stepClone,
   stepBuild,
@@ -175,8 +176,11 @@ export async function run({ flags }) {
   /** @type {any[]} */
   const results = [];
 
+  const overall = sites.length > 1 ? progressBar(sites.length, { label: '站点' }) : null;
+
   for (const site of sites) {
     console.log('');
+    if (overall) overall.done();
     console.log(`${c.cyan}${'─'.repeat(60)}${c.reset}`);
     console.log(`${c.bold}${site.label}${c.reset} ${c.dim}(${site.id} → ${site.project})${c.reset}`);
     console.log(`${c.cyan}${'─'.repeat(60)}${c.reset}`);
@@ -295,9 +299,11 @@ export async function run({ flags }) {
     }
 
     results.push(result);
+    if (overall) overall.advance(1, site.label);
   }
 
   // ─── 汇总 ───
+  if (overall) overall.done();
   console.log('');
   console.log(`${c.bold}${'═'.repeat(60)}${c.reset}`);
   console.log(`${c.bold}结果汇总${c.reset}`);

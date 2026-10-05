@@ -25,7 +25,18 @@ import { log, table, color as c, confirm as rawConfirm, humanNum, humanBytes } f
 import { FREE_TIER, PITFALLS } from '../lib/quota.mjs';
 import { CFError } from '../lib/cf.mjs';
 
-/** 把命令模块的 run() 包成「可重复调用」的形式 */
+/**
+ * 把命令模块的 run() 包成「可重复调用」的形式。
+ *
+ * ⚠️ 关键改进：不套 spinner。
+ *   一开始我想给 invoke 加统一的 spinner，但实测发现**会互相干扰** ——
+ *   deploy 之类的命令自己会更新 spinner 文本（「正在安装依赖」→
+ *   「正在构建」），外面再套一层 spinner 就会出现两个动画抢同一行，
+ *   输出变成乱码。
+ *
+ *   所以 spinner 交给**知道自己内部阶段**的命令自己去管，
+ *   invoke 只负责捕获异常。
+ */
 async function invoke(cmd, ctx) {
   const mod = await import(`./${cmd}.mjs`);
   try {
@@ -270,45 +281,13 @@ async function usageMenu(p, client, flags) {
  * @param {string} action
  */
 async function pickZoneAndRun(p, client, action) {
-  if (!(await ensureCreds(p, client))) return;
-  const cf = client();
-  let zones;
-  try {
-    zones = await cf.listZones();
-  } catch (err) {
-    log.err(`无法获取域名列表：${err.message}`);
-    await p.pause();
-    return;
-  }
+  const zone = await pickZone(p, client);
+  if (!zone) return;
 
-  if (!zones.length) {
-    log.warn('账号下没有可见的域名。');
-    log.dim('先在 Cloudflare 添加域名，或检查 Token 的 Zone:Read 权限。');
-    await p.pause();
-    return;
-  }
-
-  while (true) {
-    clearScreen();
-    const choice = await p.select(
-      `选择域名（${action === 'doctor' ? '体检' : '操作'}）`,
-      [
-        ...zones.map((z) => ({
-          label: z.name,
-          value: z.id,
-          hint: `${z.plan?.name ?? '?'} · ${z.status}`,
-        })),
-        { label: '返回', value: 'back' },
-      ],
-    );
-    if (isBack(choice) || choice === 'back') return;
-
-    const zone = zones.find((z) => z.id === choice);
-    clearScreen();
-    await invoke(action, { client, flags: { _: [action, zone.name], zone: zone.name } });
-    console.log('');
-    await p.pause();
-  }
+  clearScreen();
+  await invoke(action, { client, flags: { _: [action, zone.name], zone: zone.name } });
+  console.log("");
+  await p.pause();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -574,29 +553,129 @@ async function opsMenu(p, client, flags) {
   }
 }
 
-/** 通用：选一个 zone 执行某个子命令 */
-async function runOnZone(p, client, cmd, sub, flags = {}) {
-  const cf = client();
-  let zones;
-  try {
-    zones = await cf.listZones();
-  } catch (err) {
-    log.err(`无法获取域名：${err.message}`);
-    return false;
-  }
-  if (!zones.length) {
-    log.warn('没有可见的域名。');
-    return false;
+
+// ═══════════════════════════════════════════════════════════
+// Zone 缓存与统一的选域名交互
+// ═══════════════════════════════════════════════════════════
+//
+// 为什么需要缓存：
+//   交互模式下几乎每个菜单都要先列 zone 让用户选。原实现每次
+//   都调 cf.listZones() 发真实请求 —— 用户在主菜单和二级菜单
+//   之间来回切几次就发了十几个重复请求，又慢又浪费配额。
+//
+// 缓存策略：
+//   · 进程生命周期内有效（交互会话通常几分钟）
+//   · 支持强制刷新（用户主动选「刷新列表」）
+//   · 缓存 Promise 而非结果 —— 并发调用只触发一次请求
+
+/** @type {Promise<any[]>|null} */
+let zoneCache = null;
+/** @type {number} */
+let zoneCacheAt = 0;
+const ZONE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * 获取 zone 列表（带缓存）。
+ * @param {() => any} client
+ * @param {{force?:boolean}} [opts]
+ * @returns {Promise<any[]>}
+ */
+async function getZones(client, opts = {}) {
+  const now = Date.now();
+
+  if (!opts.force && zoneCache && now - zoneCacheAt < ZONE_TTL_MS) {
+    return zoneCache;
   }
 
-  const choice = await p.select(
-    '选择域名',
-    [...zones.map((z) => ({ label: z.name, value: z.name, hint: z.plan?.name })), { label: '返回', value: null }],
-  );
-  if (isBack(choice) || !choice) return false;
+  const cf = client();
+  zoneCache = cf.listZones();
+  zoneCacheAt = now;
+
+  try {
+    return await zoneCache;
+  } catch (err) {
+    // 失败时清掉缓存，避免把错误结果缓存住
+    zoneCache = null;
+    zoneCacheAt = 0;
+    throw err;
+  }
+}
+
+/** 清空缓存（修改了 zone 之后调用） */
+function invalidateZones() {
+  zoneCache = null;
+  zoneCacheAt = 0;
+}
+
+/**
+ * 统一的「选一个 zone」交互。
+ *
+ * 原实现散落在 6 个菜单里，每个都重复「拉列表 → 拼选项 → 处理返回」。
+ * 抽出来后：加了缓存、加了刷新入口、加了套餐信息。
+ *
+ * @param {Prompt} p
+ * @param {() => any} client
+ * @param {{title?:string, allowRefresh?:boolean}} [opts]
+ * @returns {Promise<any|null>} 选中的 zone，取消则 null
+ */
+async function pickZone(p, client, opts = {}) {
+  const title = opts.title ?? '选择域名';
+
+  while (true) {
+    let zones;
+    try {
+      zones = await getZones(client);
+    } catch (err) {
+      log.err("无法获取域名列表：" + err.message);
+      return null;
+    }
+
+    if (!zones.length) {
+      log.warn('账号下没有可见的域名。');
+      log.dim('先在 Cloudflare 添加域名，或检查 Token 的 Zone:Read 权限。');
+      return null;
+    }
+
+    const choices = zones.map((z) => ({
+      label: z.name,
+      value: z.id,
+      hint: (z.plan?.name ?? "?") + " · " + z.status,
+    }));
+
+    if (opts.allowRefresh !== false) {
+      choices.push({ label: '─'.repeat(28), value: '__sep__', disabled: true });
+      choices.push({ label: '刷新列表', value: '__refresh__', hint: '当前 ' + zones.length + ' 个' });
+    }
+    choices.push({ label: '返回', value: null });
+
+    const picked = await p.select(title, choices);
+
+    if (isBack(picked)) return null;
+    if (picked === null) return null;
+    if (picked === '__refresh__') {
+      invalidateZones();
+      continue;
+    }
+    if (picked === '__sep__') continue;
+
+    return zones.find((z) => z.id === picked) ?? null;
+  }
+}
+
+/**
+ * 选一个 zone 并执行某个命令。
+ * @param {Prompt} p
+ * @param {() => any} client
+ * @param {string} cmd
+ * @param {string} sub
+ * @param {Record<string,any>} [extraFlags]
+ */
+async function runOnZone(p, client, cmd, sub, extraFlags = {}) {
+  const zone = await pickZone(p, client);
+  if (!zone) return false;
 
   clearScreen();
-  await invoke(cmd, { client, flags: { _: [cmd, sub, choice], ...flags } });
+  await invoke(cmd, { client, flags: { _: [cmd, sub, zone.name], ...extraFlags } });
   return true;
 }
 
@@ -621,7 +700,7 @@ async function dnsMenu(p, client) {
     if (choice === 'notproxied') {
       clearScreen();
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
+      const zones = await getZones(client).catch(() => []);
       if (!zones.length) {
         log.warn('没有可见的域名。');
         await p.pause();
@@ -651,11 +730,7 @@ async function dnsMenu(p, client) {
     if (choice === 'export') {
       clearScreen();
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
-      const zc = await p.select('选择域名', [
-        ...zones.map((z) => ({ label: z.name, value: z.name })),
-        { label: '返回', value: null },
-      ]);
+      const zc = await pickZone(p, client);
       if (!zc) continue;
       const file = await p.input('保存到文件', { default: `dns-${zc}-${Date.now()}.json` });
       await invoke('dns', { client, flags: { _: ['dns', 'export', zc], file } });
@@ -670,8 +745,8 @@ async function dnsMenu(p, client) {
 
       if (await p.confirm(`${enable ? '开启' : '关闭'}橙云会修改真实配置，确认执行？`, false)) {
         const cf = client();
-        const zones = await cf.listZones();
-        const zc = await p.select('再确认一次域名', zones.map((z) => ({ label: z.name, value: z.name })));
+        const zone2 = await pickZone(p, client, { title: '再确认一次域名', allowRefresh: false });
+        const zc = zone2 ? zone2.name : null;
         await invoke('dns', { client, flags: { _: ['dns', 'proxy', zc], enable, yes: true } });
       } else {
         log.info('已取消。');
@@ -682,11 +757,7 @@ async function dnsMenu(p, client) {
     if (choice === 'ddns') {
       clearScreen();
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
-      const zc = await p.select('选择域名', [
-        ...zones.map((z) => ({ label: z.name, value: z.name })),
-        { label: '返回', value: null },
-      ]);
+      const zc = await pickZone(p, client);
       if (!zc) continue;
       const name = await p.input('记录名（如 home）', { default: 'home' });
       await invoke('dns', { client, flags: { _: ['dns', 'ddns', zc], name } });
@@ -729,11 +800,7 @@ async function cacheMenu(p, client) {
       if (!profile) continue;
 
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
-      const zc = await p.select('选择域名', [
-        ...zones.map((z) => ({ label: z.name, value: z.name })),
-        { label: '返回', value: null },
-      ]);
+      const zc = await pickZone(p, client);
       if (!zc) continue;
 
       clearScreen();
@@ -758,11 +825,7 @@ async function cacheMenu(p, client) {
       if (!mode) continue;
 
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
-      const zc = await p.select('选择域名', [
-        ...zones.map((z) => ({ label: z.name, value: z.name })),
-        { label: '返回', value: null },
-      ]);
+      const zc = await pickZone(p, client);
       if (!zc) continue;
 
       clearScreen();
@@ -823,11 +886,7 @@ async function zoneMenu(p, client) {
       clearScreen();
       const withHsts = await p.confirm('是否一并开启 HSTS？（不可逆，需先确认所有子域都有有效证书）', false);
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
-      const zc = await p.select('选择域名', [
-        ...zones.map((z) => ({ label: z.name, value: z.name })),
-        { label: '返回', value: null },
-      ]);
+      const zc = await pickZone(p, client);
       if (!zc) continue;
 
       clearScreen();
@@ -874,11 +933,7 @@ async function zoneMenu(p, client) {
         if (!(await p.confirm('确定吗？', false))) continue;
       }
       const cf = client();
-      const zones = await cf.listZones().catch(() => []);
-      const zc = await p.select('选择域名', [
-        ...zones.map((z) => ({ label: z.name, value: z.name })),
-        { label: '返回', value: null },
-      ]);
+      const zc = await pickZone(p, client);
       if (!zc) continue;
       await invoke('zone', {
         client,
@@ -1272,14 +1327,7 @@ async function wizard(p, client) {
   banner('初始化向导', '新域名接入后的标准加固流程');
 
   const cf = client();
-  let zones;
-  try {
-    zones = await cf.listZones();
-  } catch (err) {
-    log.err(`无法获取域名：${err.message}`);
-    await p.pause();
-    return;
-  }
+  // 用统一的 pickZone（自带缓存，不会重复请求）
 
   if (!zones.length) {
     log.warn('没有可见的域名。');
@@ -1288,11 +1336,9 @@ async function wizard(p, client) {
     return;
   }
 
-  const zc = await p.select(
-    '选择要初始化的域名',
-    [...zones.map((z) => ({ label: z.name, value: z.name, hint: z.plan?.name })), { label: '返回', value: null }],
-  );
-  if (!zc) return;
+  const zone = await pickZone(p, client, { title: '选择要初始化的域名' });
+  if (!zone) return;
+  const zc = zone.name;
 
   // 步骤定义
   const steps = [
