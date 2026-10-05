@@ -85,8 +85,48 @@ if "%FIRSTCHOICE%"=="0" exit /b 0
 goto :first_run_check
 
 :first_run_auth
-if not exist "%PS1_DIR%\auth-setup.ps1" goto :first_run_done
+if not exist "%PS1_DIR%\auth-setup.ps1" goto :first_run_deploy
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\auth-setup.ps1"
+
+:first_run_deploy
+REM ─── 部署配置初始化 ───
+REM
+REM 分享出去的包里 repoOwner 是空的（不带作者的账号信息），
+REM 需要跑一遍初始化向导补全。这不是错误，是正常状态。
+
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :first_run_done
+
+REM 用 Node 判断配置状态（比在 bat 里解析 JSON 可靠得多）
+node "%SCRIPT_DIR%\bin\cfm.mjs" setup --check >nul 2>&1
+if %errorlevel%==0 goto :first_run_done
+REM
+REM 退出码约定（setup --check）：
+REM   0 = 已就绪，直接跳过
+REM   3 = 未初始化，需要跑向导
+REM   其他 = 真错误，也不该拦着用户
+if not %errorlevel%==3 goto :first_run_done
+
+echo.
+echo  ────────────────────────────────────────────────────────────────
+echo.
+echo  部署配置还没初始化。
+echo.
+echo  这不是错误 —— 分享包里不含任何人的账号信息。
+echo  接下来会问你几个问题，自动补全：
+echo.
+echo    · 你的 GitHub 用户名（自动检测）
+echo    · 自动分析每个仓库的构建方式
+echo    · 自动在你账号下创建需要的数据库/存储
+echo.
+echo  暂时不用部署功能的话，跳过也行（额度查询等功能不受影响）。
+echo.
+choice /c YN /n /m "  现在初始化部署配置？[Y/N] "
+if errorlevel 2 goto :first_run_done
+
+node "%SCRIPT_DIR%\bin\cfm.mjs" setup
+echo.
+pause
+
 
 :first_run_done
 REM 写标记文件，下次不再走首次流程

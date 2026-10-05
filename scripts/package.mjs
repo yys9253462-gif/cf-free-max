@@ -57,7 +57,12 @@ const INCLUDE = [
  *   用户拿到后按提示改成自己的值。既不泄漏，又不影响开箱可用性。
  */
 const REPLACE_FILES = [
-  { src: path.join('config', 'sites.example.json'), dest: path.join('config', 'sites.json') },
+  // 分享包里放的是「分享版配置」：
+  //   · 保留了项目结构（仓库名、构建方式、需要的绑定）
+  //   · 清掉了作者专属信息（GitHub 用户名、域名、资源 ID）
+  //   · protected 标记也去掉 —— 别人要能部署自己的一套
+  // 用户首次运行时，init 向导会自动补齐空的字段。
+  { src: path.join('config', 'sites.share.json'), dest: path.join('config', 'sites.json') },
 ];
 
 /** 绝不打包的东西（即使误加进 INCLUDE 也会被拦下） */
@@ -449,7 +454,7 @@ function build() {
   if (hasTemplate && fs.existsSync(realConfig)) {
     // 已被模板覆盖，没问题；但要确认内容确实是模板而非真实配置
     const content = fs.readFileSync(realConfig, 'utf8');
-    if (!content.includes('your-github-username')) {
+    if (!content.includes('这是分享给大家的初始配置')) {
       console.log(`  \x1b[31m✘ config/sites.json 不是模板内容，可能包含真实配置！\x1b[0m`);
       process.exit(1);
     }

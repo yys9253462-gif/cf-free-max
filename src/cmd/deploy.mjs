@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import { log, table, color as c, confirm, humanBytes } from '../lib/util.mjs';
 import { loadConfig, inspectRepo, ConfigError } from '../lib/deploy-config.mjs';
 import { applyPatches, PATCHES } from '../lib/deploy-patches.mjs';
+import { checkNeedsInit } from '../lib/deploy-init.mjs';
 import { progressBar } from '../lib/spinner.mjs';
 import {
   stepClone,
@@ -45,6 +46,34 @@ export async function run({ flags }) {
       return 2;
     }
     throw e;
+  }
+
+  // ─── 未初始化时先引导 ───
+  //
+  // 分享出去的包里配置是「半成品」—— repoOwner 空着、D1 id 空着。
+  // 用户第一次跑 deploy 会一脸茫然，所以这里主动引导他先初始化。
+  const initState = checkNeedsInit(cfg);
+  if (initState.needsInit && !flags.list && !flags['dry-run']) {
+    console.log('');
+    log.warn('配置还没初始化，不能直接部署。');
+    console.log('');
+    console.log(`  ${c.dim}缺少：${initState.missing.join(', ')}${c.reset}`);
+    console.log('');
+    console.log('  这是正常现象 —— 分享出去的包里不带作者的账号信息，');
+    console.log('  需要先跑一遍初始化向导，把配置补成你自己的。');
+    console.log('');
+    console.log(`  运行：${c.cyan}cfm setup${c.reset}`);
+    console.log('');
+
+    if (process.stdin.isTTY && !flags.yes) {
+      const go = await confirm('现在就开始初始化？', true);
+      if (go) {
+        const { run: runSetup } = await import('./setup.mjs');
+        return runSetup({ flags, client });
+      }
+    }
+    console.log('');
+    return 2;
   }
 
   // ─── 子模式 ───

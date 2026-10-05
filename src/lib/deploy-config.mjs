@@ -44,8 +44,11 @@ export function loadConfig(configPath = CONFIG_PATH) {
 
   const errors = [];
 
-  if (!raw.repoOwner || typeof raw.repoOwner !== 'string') {
-    errors.push('repoOwner：必填，GitHub 用户名或组织名');
+  // repoOwner 允许为空 —— 表示「还没初始化」，由 setup 向导补齐。
+  // 实测踩过：分享包里 repoOwner 是空的，如果这里报错，
+  // 别人第一次运行就被挡住，连初始化向导都进不去。
+  if (raw.repoOwner !== undefined && raw.repoOwner !== null && typeof raw.repoOwner !== 'string') {
+    errors.push('repoOwner：必须是字符串（GitHub 用户名或组织名）');
   }
 
   if (!Array.isArray(raw.sites) || raw.sites.length === 0) {
@@ -82,8 +85,10 @@ export function loadConfig(configPath = CONFIG_PATH) {
             }
             if (!b.binding) errors.push(`${bw}.binding：必填，代码里引用绑定的变量名`);
             if (!b.name) errors.push(`${bw}.name：必填，Cloudflare 上的资源名`);
-            if (b.type === 'd1' && !b.id) {
-              errors.push(`${bw}.id：D1 需要 database_id（在控制台或 wrangler d1 list 里查）`);
+            // D1 的 id 允许为空 —— 表示「还没创建」，由 setup 向导自动建。
+            // 只在显式开启了严格校验时才报错。
+            if (b.type === 'd1' && !b.id && raw.strictValidation) {
+              errors.push(`${bw}.id：D1 需要 database_id`);
             }
           });
         }
