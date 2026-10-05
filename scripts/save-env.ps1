@@ -37,6 +37,36 @@ $ErrorActionPreference = 'Stop'
 # 用户粘贴时常带上引号、首尾空格，甚至从别的文档里带出零宽字符。
 # 这些都会让 Token 校验失败，而且报错信息看不出原因。
 
+
+# ─── 权限缺失诊断 ───
+#
+# 原实现只打一句「可能缺少 Account:Read 权限」，用户不知道去哪补。
+# 这里给出完整路径：在哪个页面、加哪一条、第一个下拉选什么。
+function Show-MissingAccountPermission {
+    Write-Host ''
+    Write-Host '  ! 这个 Token 看不到账号 —— 不是「正常」，是缺了一条权限' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  影响：R2 / KV / D1 / Pages / Tunnel 需要账号级权限，现在用不了。' -ForegroundColor DarkGray
+    Write-Host '        只看用量和列域名不受影响，现在就能用。' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  补权限的办法（1 分钟）：' -ForegroundColor White
+    Write-Host ''
+    Write-Host '    1. 打开 https://dash.cloudflare.com/profile/api-tokens' -ForegroundColor DarkGray
+    Write-Host '    2. 找到你刚建的那个 Token，点右边「...」→「Edit」' -ForegroundColor DarkGray
+    Write-Host '    3. 在 Permissions 点「+ Add more」，加上这一条：' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '         Account  |  Account Settings  |  Read' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '       注意第一个下拉选 Account（不是 Zone）' -ForegroundColor DarkGray
+    Write-Host '    4. 保存后回到本窗口，重新选 [7] 配置' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  或者自己找 Account ID（32 位十六进制），手动填进来：' -ForegroundColor White
+    Write-Host '    · 登录 https://dash.cloudflare.com 后看浏览器地址栏' -ForegroundColor DarkGray
+    Write-Host '      https://dash.cloudflare.com/<这串就是>/home' -ForegroundColor DarkGray
+    Write-Host '    · 或任意域名管理页拉到底部，右下角显示 Account ID' -ForegroundColor DarkGray
+    Write-Host ''
+}
+
 function Clean-Value {
     param([string]$v)
     if ($null -eq $v) { return '' }
@@ -147,11 +177,11 @@ try {
                 Write-Host '  ! 有多个账号，请在 .env 里指定 CF_ACCOUNT_ID' -ForegroundColor Yellow
             }
             else {
-                Write-Host '    （该 Token 看不到账号，可能是 zone-scoped，正常）' -ForegroundColor DarkGray
+                Show-MissingAccountPermission
             }
         }
         catch {
-            Write-Host '    （账号列表查询失败，可能缺少 Account:Read 权限）' -ForegroundColor DarkGray
+            Show-MissingAccountPermission
         }
 
         exit 0
