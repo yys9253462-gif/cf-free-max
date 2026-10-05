@@ -69,6 +69,37 @@ jobs:
             exit 1
           fi
 
+      - name: 检查 shell 脚本（语法 + 行尾 + 可执行位）
+        run: |
+          set -e
+          for f in $(git ls-files '*.sh'); do
+            echo "→ $f"
+            bash -n "$f"
+
+            # 行尾必须是 LF —— CRLF 的 shell 脚本在 Linux 上会报
+            # bash: $'\r': command not found
+            if grep -qU $'\r' "$f"; then
+              echo "::error file=$f::含 CRLF 行尾"
+              exit 1
+            fi
+
+            # 可执行位 —— git archive 在 Windows 上会丢，用 tarfile 手工打包时要注意
+            if ! git ls-files -s "$f" | grep -q '^100755'; then
+              echo "::warning file=$f::缺少可执行位（git update-index --chmod=+x $f）"
+            fi
+          done
+
+      - name: shell 脚本在无凭据时应干净退出
+        run: |
+          set -e
+          unset CF_API_TOKEN || true
+          out=$(bash scripts/cf-quick-check.sh 2>&1) && code=0 || code=$?
+          echo "$out"
+          if [ "$code" != "2" ]; then
+            echo "::error::无凭据时脚本应以退出码 2 结束，实际 $code"
+            exit 1
+          fi
+
   windows:
     name: 测试（Windows）
     runs-on: windows-latest

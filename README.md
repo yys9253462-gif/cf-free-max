@@ -124,6 +124,22 @@ npm link          # 之后可以直接 cfm whoami
 alias cfm='node /path/to/cf-free-max/bin/cfm.mjs'
 ```
 
+### 4. 没有 Node？用 shell 版
+
+路由器、NAS、刚装好的 VPS、只有 busybox 的容器——不想为看一眼额度装运行时的话：
+
+```bash
+CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy ./scripts/cf-quick-check.sh
+```
+
+只用 `bash` + `curl`（`jq` 可选，没有会降级用 grep 解析）。覆盖最要紧的四项：Workers 请求、KV 读、**KV 写**、D1 扫描行。退出码 `0` = 正常，`1` = 有指标超阈值，适合直接挂 cron：
+
+```cron
+0 22 * * * CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy /opt/cf-free-max/scripts/cf-quick-check.sh || notify-send "CF 额度告警"
+```
+
+完整功能（体检、审计、批量操作、场景估算）仍需要 Node 版。
+
 ---
 
 ## 命令一览
@@ -432,9 +448,30 @@ src/lib/cf.mjs           Cloudflare API 客户端（重试/分页/错误解释�
 src/lib/quota.mjs        免费额度常量表（唯一来源）
 src/lib/util.mjs         参数解析、表格、确认、dotenv
 src/cmd/*.mjs            各命令实现
-scripts/lint.mjs         自研轻量 lint
-test/unit.test.mjs       单元测试
+scripts/lint.mjs         自研轻量 lint（含 import 符号核对、JSON/YAML 校验）
+scripts/cf-quick-check.sh  零依赖 shell 版快查
+test/unit.test.mjs       单元测试（25 个）
+test/e2e.test.mjs        端到端测试（需真实凭据，默认跳过）
 ```
+
+### 跑真实 API 的端到端测试
+
+默认跳过（防止误打生产）。要跑的话：
+
+```bash
+CFM_E2E=1 CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy node --test test/e2e.test.mjs
+```
+
+`test/e2e.test.mjs` 里**只有只读操作** —— 写操作的验证必须在有回滚预案的前提下由人手动做。
+
+### lint 做了什么
+
+除了常规的语法与行尾，还检查两类 `node --check` 抓不到的问题：
+
+1. **import 的符号是否真的被导出**
+   实测踩过：`usage.mjs` 导入了 `req_`（实际叫 `require_`），语法检查全绿，一跑就崩。
+2. **JSON/YAML 合法性**
+   实测踩过：`package.json` 开头写了 `#` 注释（JSON 不支持注释），整个文件解析不了，但 lint 只扫 `.mjs` 所以没发现。
 
 ---
 
