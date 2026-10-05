@@ -6,7 +6,7 @@
  * Cloudflare 控制台不给你一个统一的「还剩多少」，这里把它做出来。
  */
 
-import { log, table, color, humanNum, humanBytes, req_ } from '../lib/util.mjs';
+import { log, table, color, humanNum, humanBytes } from '../lib/util.mjs';
 import { FREE_TIER } from '../lib/quota.mjs';
 import { CFClient } from '../lib/cf.mjs';
 

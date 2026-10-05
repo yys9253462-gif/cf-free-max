@@ -86,6 +86,38 @@ for (const file of files) {
   if (/console\.log\([^)]*\b(token|key|secret|password)\b/i.test(raw) && !/hasValue|已加密|不要|等同|获取|token 用|前缀/.test(raw)) {
     problems.push({ level: 'warn', file: rel, msg: '可能打印了凭据类变量，请人工确认' });
   }
+
+  // 7. 校验 import 的具名符号确实被导出了
+  //    node --check 只做语法解析，**查不出**「导入了不存在的符号」这类错误，
+  //    只有实际执行才会报 "does not provide an export named"。实测踩过：
+  //    usage.mjs 导入了 req_（实际叫 require_），语法检查全绿，一跑就崩。
+  for (const m of raw.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g)) {
+    const names = m[1]
+      .split(',')
+      .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
+      .filter(Boolean);
+    const target = path.resolve(path.dirname(file), m[2]);
+    const candidates = [target, target + '.mjs', path.join(target, 'index.mjs')];
+    const targetFile = candidates.find((c) => fs.existsSync(c) && fs.statSync(c).isFile());
+    if (!targetFile) continue; // 解析不到就算了，交给运行时
+
+    const targetSrc = fs.readFileSync(targetFile, 'utf8');
+    for (const name of names) {
+      if (name === 'default') continue;
+      // 匹配 export const/function/class/let/var NAME 或 export { NAME }
+      const exported =
+        new RegExp(`export\\s+(?:async\\s+)?(?:const|let|var|function|class)\\s+${name}\\b`).test(targetSrc) ||
+        new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`).test(targetSrc) ||
+        new RegExp(`export\\s*\\*`).test(targetSrc);
+      if (!exported) {
+        problems.push({
+          level: 'error',
+          file: rel,
+          msg: `从 ${m[2]} 导入了 "${name}"，但目标文件没有导出它`,
+        });
+      }
+    }
+  }
 }
 
 // 输出

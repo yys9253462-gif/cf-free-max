@@ -45,14 +45,16 @@ jobs:
       - name: 单元测试
         run: node --test "test/**/*.test.mjs"
 
-      - name: 验证所有命令可加载（不调用 API）
+      - name: 验证所有命令可加载（捕捉 node --check 查不出的未定义导入）
         run: |
           set -e
-          for cmd in help quota whoami doctor usage dns cache zone r2 pages workers kv d1 tunnel audit; do
-            echo "→ 检查 $cmd"
-            node bin/cfm.mjs "$cmd" --help >/dev/null 2>&1 || \
-            node -e "import('./src/cmd/$cmd.mjs').catch(e => { console.error('$cmd 加载失败:', e.message); process.exit(1) })"
+          for cmd in help whoami doctor quota usage dns cache zone r2 pages workers kv d1 tunnel audit; do
+            echo "→ 加载 $cmd"
+            node -e "import('./src/cmd/$cmd.mjs').then(m => {
+              if (typeof m.run !== 'function') { console.error('$cmd 没有导出 run()'); process.exit(1) }
+            }).catch(e => { console.error('$cmd 加载失败:', e.message); process.exit(1) })"
           done
+          echo "✔ 全部命令模块加载正常"
 
       - name: 验证无凭据时给出清晰错误
         run: |
