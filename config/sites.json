@@ -1,0 +1,87 @@
+{
+  "repoOwner": "yys9253462-gif",
+  "workspace": "",
+
+  "protectedNote": "⚠️ 阅读本节后再改配置。带 protected:true 的站点是「只读保护」的：脚本能检查、能报告，但绝不 clone、构建、部署或做任何改动。用途是把正在服务的项目纳入统一视图，同时杜绝误覆盖。",
+
+  "sites": [
+    {
+      "id": "blog",
+      "label": "静态博客",
+      "repo": "fuwari",
+      "project": "fuwari-blog",
+      "domain": "blog.u88b.com",
+      "type": "build",
+      "buildCommand": "npm run build",
+      "installCommand": "npm install",
+      "outputDir": "dist",
+      "branch": "main",
+      "description": "Astro 博客，构建型，无后端绑定",
+      "bindings": [],
+      "patches": ["disable-rss-route", "disable-sitemap", "tolerate-partial-build"],
+      "patchesNote": "上游 @astrojs/rss 与 @astrojs/sitemap 都与 zod 4 不兼容，会让构建崩溃；禁用这两个集成"
+    },
+    {
+      "id": "nav",
+      "label": "静态导航",
+      "repo": "isoziyuan-nav",
+      "project": "isoziyuan-nav",
+      "domain": "ailxw.com",
+      "type": "static",
+      "buildCommand": "",
+      "installCommand": "",
+      "outputDir": ".",
+      "branch": "main",
+      "description": "纯静态 + Pages Functions，依赖 D1 存储",
+      "bindings": [
+        {
+          "type": "d1",
+          "binding": "NAV_DB",
+          "name": "isoziyuan-nav-db",
+          "id": "9cda72c3-14f7-492d-9d4b-ffe7da52afc0",
+          "optional": false
+        }
+      ]
+    },
+    {
+      "id": "pan",
+      "label": "网盘",
+      "repo": "isoziyuan-pan",
+      "project": "isoziyuan-pan",
+      "domain": "pan.ailxw.com",
+      "type": "static",
+      "buildCommand": "",
+      "installCommand": "",
+      "outputDir": ".",
+      "branch": "main",
+      "protected": true,
+      "protectedReason": "该网盘正在正常服务，切勿重新部署覆盖。脚本只做只读检查，不 clone / 不构建 / 不部署。",
+      "description": "纯静态 + Pages Functions，依赖 D1 与 R2（🔒 只读保护）",
+      "bindings": [
+        {
+          "type": "d1",
+          "binding": "DB",
+          "name": "isoziyuan-pan-db",
+          "id": "109a673e-778b-4429-a4eb-a9742551a79e",
+          "optional": false
+        },
+        {
+          "type": "r2",
+          "binding": "R2",
+          "name": "forum-uploads",
+          "optional": true
+        }
+      ]
+    }
+  ],
+
+  "options": {
+    "autoInstallDeps": true,
+    "cleanInstall": false,
+    "verifyAfterDeploy": false,
+    "deployTimeoutSec": 600,
+    "buildTimeoutSec": 900
+  },
+
+  "optionsNote": "verifyAfterDeploy 默认关闭：部署后自动访问会打到生产站点，需要时再用 --verify 显式开启"
+}

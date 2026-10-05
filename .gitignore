@@ -42,3 +42,9 @@ logs/
 # 测试与覆盖率
 coverage/
 .nyc_output/
+
+# 部署工作区（clone 下来的仓库，含 node_modules，不该提交）
+.sites/
+
+# wrangler 的本地状态
+.wrangler/

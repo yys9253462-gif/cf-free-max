@@ -36,6 +36,7 @@ const COMMANDS = {
   d1: () => import('../src/cmd/d1.mjs'),
   tunnel: () => import('../src/cmd/tunnel.mjs'),
   audit: () => import('../src/cmd/audit.mjs'),
+  deploy: () => import('../src/cmd/deploy.mjs'),
 };
 
 async function main() {

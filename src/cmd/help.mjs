@@ -23,6 +23,7 @@ ${color.bold}操作类${color.reset}
   ${color.cyan}kv${color.reset} <子命令>                 KV 命名空间（list/create/put/get/keys）
   ${color.cyan}d1${color.reset} <子命令>                 D1 数据库（list/create/query/backup/index）
   ${color.cyan}tunnel${color.reset} <子命令>             Cloudflare Tunnel（list/create/route）
+  ${color.cyan}deploy${color.reset} <子命令>             部署站点到 Pages（list/check/--only）
 
 ${color.bold}全局选项${color.reset}
   --verbose, -v            打印重试与请求细节

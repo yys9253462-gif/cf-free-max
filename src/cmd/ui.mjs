@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 交互式主界面 —— 不用记命令，进去选就行。
  *
  * 用法：
@@ -136,6 +136,7 @@ async function mainMenu(p, client, flags) {
       { label: '🧮  场景估算', value: 'estimate', hint: '部分离线可用 · 这个用法能撑多少流量？' },
       { label: '⚙️   配置与操作', value: 'ops', hint: noCreds ? '需要凭据' : 'DNS / 缓存 / R2 / Workers 等' },
       { label: '🚀  初始化向导', value: 'wizard', hint: noCreds ? '需要凭据' : '新域名接入后的一键加固' },
+      { label: '📦  部署站点', value: 'deploy', hint: '一键把站点发布到 Pages' },
       { label: '❓  帮助', value: 'help', hint: '命令对照与文档' },
       { label: '退出', value: 'exit' },
     ]);
@@ -163,6 +164,9 @@ async function mainMenu(p, client, flags) {
         break;
       case 'wizard':
         await wizard(p, client);
+        break;
+      case 'deploy':
+        await deployMenu(p, client);
         break;
       case 'help':
         await helpView(p);
@@ -1439,5 +1443,153 @@ async function helpView(p) {
       }
       break;
   }
+  await p.pause();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 部署站点
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function deployMenu(p, client) {
+  while (true) {
+    clearScreen();
+    banner('部署站点', '发布到 Cloudflare Pages');
+
+    // 读配置显示站点列表
+    let sites = [];
+    let protectedSites = [];
+    try {
+      const { loadConfig } = await import('../lib/deploy-config.mjs');
+      const cfg = loadConfig();
+      sites = cfg.sites.filter((s) => !s.protected);
+      protectedSites = cfg.sites.filter((s) => s.protected);
+    } catch (err) {
+      log.err(`读取部署配置失败：${err.message}`);
+      if (String(err.message).includes('找不到配置文件')) {
+        log.dim('配置文件：config/sites.json');
+      }
+      console.log('');
+      await p.pause();
+      return;
+    }
+
+    const choices = [
+      { label: '查看配置与状态', value: 'list', hint: '只读，建议先看' },
+      { label: '检查线上状态', value: 'online', hint: '只读，含受保护站点' },
+      { label: '环境体检', value: 'check', hint: 'Node / git / wrangler / 认证' },
+      { label: '─'.repeat(30), value: 'sep', disabled: true },
+    ];
+
+    for (const s of sites) {
+      choices.push({
+        label: `部署：${s.label}`,
+        value: `deploy:${s.id}`,
+        hint: s.domain || s.project,
+      });
+    }
+
+    choices.push({ label: '─'.repeat(30), value: 'sep2', disabled: true });
+    choices.push({ label: '预演（不实际执行）', value: 'dry', hint: '看会做什么' });
+    // 受保护站点不提供部署入口，但说明存在
+    if (protectedSites.length) {
+      choices.push({
+        label: `🔒 ${protectedSites.map((s) => s.label).join('、')}（受保护）`,
+        value: 'protected-info',
+        hint: '不参与部署，可查看状态',
+      });
+    }
+    choices.push({ label: '返回', value: 'back' });
+
+    const choice = await p.select('选择操作', choices);
+    if (isBack(choice) || choice === 'back') return;
+    if (choice === 'sep' || choice === 'sep2') continue;
+
+    clearScreen();
+
+    switch (choice) {
+      case 'list':
+        await invoke('deploy', { client, flags: { _: ['deploy'], list: true } });
+        break;
+      case 'online':
+        await invoke('deploy', { client, flags: { _: ['deploy'], 'check-online': true } });
+        break;
+      case 'check':
+        await invoke('deploy', { client, flags: { _: ['deploy'], check: true } });
+        break;
+      case 'dry':
+        await invoke('deploy', { client, flags: { _: ['deploy'], 'dry-run': true } });
+        break;
+      case 'protected-info':
+        await showProtectedInfo(p, protectedSites);
+        continue;
+      default:
+        if (choice.startsWith('deploy:')) {
+          const id = choice.slice('deploy:'.length);
+          const site = sites.find((s) => s.id === id);
+          if (site) await confirmAndDeploy(p, client, site);
+        }
+        break;
+    }
+
+    console.log('');
+    await p.pause();
+  }
+}
+
+/** 部署前的确认页 —— 把「将要做什么」讲清楚 */
+async function confirmAndDeploy(p, client, site) {
+  console.log('');
+  console.log(`${c.bold}准备部署：${site.label}${c.reset}`);
+  console.log('');
+  console.log(`  ${c.dim}仓库${c.reset}      ${site.repo}`);
+  console.log(`  ${c.dim}Pages 项目${c.reset}  ${site.project}`);
+  if (site.domain) console.log(`  ${c.dim}线上域名${c.reset}  ${site.domain}`);
+  console.log(`  ${c.dim}类型${c.reset}      ${site.type === 'build' ? `构建（${site.buildCommand}）` : '纯静态'}`);
+  console.log(`  ${c.dim}产物目录${c.reset}  ${site.outputDir}`);
+
+  if (site.patches?.length) {
+    console.log('');
+    console.log(`  ${c.yellow}会应用 ${site.patches.length} 个构建补丁：${c.reset}`);
+    for (const id of site.patches) {
+      console.log(`    · ${id}`);
+    }
+  }
+
+  console.log('');
+  log.dim('流程：拉取代码 → 安装依赖 → 构建 → 上传到 Pages');
+  log.dim('不消耗 Pages 每月 500 次的构建额度（Direct Upload）。');
+  console.log('');
+  log.warn('部署会更新该 Pages 项目的线上内容。');
+
+  console.log('');
+  if (!(await p.confirm(`确认部署「${site.label}」？`, false))) {
+    log.info('已取消。');
+    return;
+  }
+
+  console.log('');
+  await invoke('deploy', { client, flags: { _: ['deploy', '--only', site.id], only: site.id, yes: true } });
+}
+
+/** 展示受保护站点的信息 */
+async function showProtectedInfo(p, sites) {
+  banner('受保护的站点', '脚本不会 clone / 构建 / 部署它们');
+  console.log('');
+
+  for (const s of sites) {
+    console.log(`  ${c.yellow}🔒 ${c.bold}${s.label}${c.reset} ${c.dim}(${s.id})${c.reset}`);
+    console.log(`      ${s.protectedReason}`);
+    console.log(`      ${c.dim}仓库 ${s.repo} → Pages 项目 ${s.project}${c.reset}`);
+    if (s.domain) console.log(`      ${c.dim}线上：${s.domain}${c.reset}`);
+    console.log('');
+  }
+
+  console.log(`  ${c.dim}这类站点默认被三层拦截保护：${c.reset}`);
+  console.log(`    ${c.dim}1. 批量部署时自动排除${c.reset}`);
+  console.log(`    ${c.dim}2. 显式指定会拒绝执行${c.reset}`);
+  console.log(`    ${c.dim}3. 即使加 --include-protected 也要二次确认${c.reset}`);
+  console.log('');
+  log.dim('想看它们是否正常，用「检查线上状态」—— 那是只读的。');
+  console.log('');
   await p.pause();
 }

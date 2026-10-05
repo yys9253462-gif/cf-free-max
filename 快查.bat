@@ -108,6 +108,7 @@ echo    [4]  KV 写入压力估算           离线可用
 echo    [5]  打开项目主页 / 文档
 echo    [6]  启动完整版（需要 Node，功能更全）
 echo    [7]  配置凭据
+echo    [8]  部署站点到 Pages
 echo.
 echo    [0]  退出
 echo.
@@ -127,6 +128,7 @@ if "%CHOICE%"=="4" goto :kv_est
 if "%CHOICE%"=="5" goto :open_home
 if "%CHOICE%"=="6" goto :launch_full
 if "%CHOICE%"=="7" goto :setup_creds
+if "%CHOICE%"=="8" goto :deploy_menu
 if "%CHOICE%"=="0" goto :quit
 if /i "%CHOICE%"=="q" goto :quit
 
@@ -491,6 +493,107 @@ echo.
 pause
 exit /b 1
 
+REM ═══════════════════════════════════════════════════════════════════════════
+REM  [8] 部署站点到 Cloudflare Pages
+REM ═══════════════════════════════════════════════════════════════════════════
+:deploy_menu
+cls
+echo.
+echo  ╔════════════════════════════════════════════════════════════════════╗
+echo  ║                   部署站点到 Cloudflare Pages                      ║
+echo  ╚════════════════════════════════════════════════════════════════════╝
+echo.
+echo    [1]  查看配置与状态（只读，建议先看）
+echo    [2]  检查线上状态（只读，含受保护站点）
+echo    [3]  环境体检（Node / git / wrangler / 认证）
+echo.
+echo    [4]  部署：静态博客
+echo    [5]  部署：静态导航
+echo.
+echo    [6]  部署全部（受保护站点自动跳过）
+echo    [7]  预演 dry-run（不实际执行）
+echo.
+echo    [0]  返回主菜单
+echo.
+echo  ────────────────────────────────────────────────────────────────────
+echo.
+
+set "DCHOICE="
+set /p "DCHOICE=请选择 [0-7]: "
+if not defined DCHOICE goto :main_menu
+
+if "%DCHOICE%"=="1" goto :deploy_list
+if "%DCHOICE%"=="2" goto :deploy_online
+if "%DCHOICE%"=="3" goto :deploy_check
+if "%DCHOICE%"=="4" goto :deploy_blog
+if "%DCHOICE%"=="5" goto :deploy_nav
+if "%DCHOICE%"=="6" goto :deploy_all
+if "%DCHOICE%"=="7" goto :deploy_dry
+if "%DCHOICE%"=="0" goto :main_menu
+goto :deploy_menu
+
+
+:deploy_list
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+call "%SCRIPT_DIR%\启动.bat" deploy --list
+echo.
+pause
+goto :deploy_menu
+
+:deploy_online
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+call "%SCRIPT_DIR%\启动.bat" deploy --check-online
+echo.
+pause
+goto :deploy_menu
+
+:deploy_check
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+call "%SCRIPT_DIR%\启动.bat" deploy --check
+echo.
+pause
+goto :deploy_menu
+
+:deploy_blog
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+call "%SCRIPT_DIR%\启动.bat" deploy --only blog
+echo.
+pause
+goto :deploy_menu
+
+:deploy_nav
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+call "%SCRIPT_DIR%\启动.bat" deploy --only nav
+echo.
+pause
+goto :deploy_menu
+
+:deploy_all
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+echo.
+echo  受保护的站点（如正在服务的网盘）会自动跳过。
+echo.
+call "%SCRIPT_DIR%\启动.bat" deploy
+echo.
+pause
+goto :deploy_menu
+
+:deploy_dry
+if not exist "%SCRIPT_DIR%\bin\cfm.mjs" goto :deploy_need_full
+call "%SCRIPT_DIR%\启动.bat" deploy --dry-run
+echo.
+pause
+goto :deploy_menu
+
+:deploy_need_full
+echo.
+echo  部署功能需要完整版（Node）。
+echo.
+echo  请确保压缩包解压完整，包含 bin\ 和 src\ 目录。
+echo.
+pause
+goto :deploy_menu
+
 :quit
 cls
 echo.
@@ -498,3 +601,4 @@ echo  再见。
 echo.
 endlocal
 exit /b 0
+
