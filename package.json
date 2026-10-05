@@ -1,16 +1,7 @@
-# 依赖声明：本项目零运行时依赖
-#
-# 这是刻意的设计选择：
-#   * 不需要 npm install 就能跑（Node 20+ 内置 fetch）
-#   * 供应链攻击面为零
-#   * 在任何机器上 clone 下来即可用
-#
-# devDependencies 仅用于本地开发辅助。
-
 {
   "name": "cf-free-max",
   "version": "1.0.0",
-  "description": "把 Cloudflare 免费额度用满的一键工具箱：额度监控、配置体检、批量运维",
+  "description": "把 Cloudflare 免费额度用满的一键工具箱：额度监控、配置体检、批量运维。零依赖。",
   "type": "module",
   "bin": {
     "cfm": "bin/cfm.mjs"
@@ -20,9 +11,11 @@
   },
   "scripts": {
     "start": "node bin/cfm.mjs",
-    "test": "node --test \"test/**/*.test.mjs\"",
+    "test": "node --test test/unit.test.mjs test/e2e.test.mjs",
+    "test:unit": "node --test test/unit.test.mjs",
+    "test:e2e": "node --test test/e2e.test.mjs",
     "lint": "node scripts/lint.mjs",
-    "check": "npm run lint && npm run test"
+    "check": "node scripts/lint.mjs && node --test test/unit.test.mjs"
   },
   "keywords": [
     "cloudflare",

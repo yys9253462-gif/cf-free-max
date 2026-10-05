@@ -42,8 +42,10 @@ jobs:
       - name: 静态检查
         run: node scripts/lint.mjs
 
+      # 显式列举测试文件：Node 18/20 不支持 `node --test "test/**/*.test.mjs"`
+      # 这种 glob 展开，会当成字面路径报 "Could not find"。实测踩过。
       - name: 单元测试
-        run: node --test "test/**/*.test.mjs"
+        run: node --test test/unit.test.mjs test/e2e.test.mjs
 
       - name: 验证所有命令可加载（捕捉 node --check 查不出的未定义导入）
         run: |
@@ -80,8 +82,10 @@ jobs:
       - name: 静态检查
         run: node scripts/lint.mjs
 
+      # 显式列举测试文件：Node 18/20 不支持 `node --test "test/**/*.test.mjs"`
+      # 这种 glob 展开，会当成字面路径报 "Could not find"。实测踩过。
       - name: 单元测试
-        run: node --test "test/**/*.test.mjs"
+        run: node --test test/unit.test.mjs test/e2e.test.mjs
 
       # Windows 上最容易出的问题是路径分隔符与编码
       - name: 验证路径处理

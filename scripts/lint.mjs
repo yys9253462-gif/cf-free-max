@@ -120,9 +120,36 @@ for (const file of files) {
   }
 }
 
-// 输出
-const errors = problems.filter((p) => p.level === 'error');
-const warns = problems.filter((p) => p.level === 'warn');
+// ---------- 额外：JSON / YAML 文件合法性 ----------
+// 实测踩过：package.json 开头写了 `#` 注释（JSON 不支持注释），
+// 语法检查发现不了（lint 只扫 .mjs），直到 npm 报错才暴露。
+for (const rel of ['package.json', '.github/workflows/ci.yml', '.github/workflows/quota-report.yml']) {
+  const abs = path.join(ROOT, rel);
+  if (!fs.existsSync(abs)) continue;
+  const text = fs.readFileSync(abs, 'utf8');
+
+  if (rel.endsWith('.json')) {
+    try {
+      JSON.parse(text);
+    } catch (e) {
+      problems.push({ level: 'error', file: rel, msg: `不是合法 JSON：${e.message}` });
+    }
+  } else if (rel.endsWith('.yml') || rel.endsWith('.yaml')) {
+    // 极简 YAML 检查：不引入解析器，只查最容易犯的错
+    if (/\t/.test(text)) {
+      problems.push({ level: 'error', file: rel, msg: 'YAML 中不能有 Tab 缩进' });
+    }
+    // 行尾
+    text.split('\n').forEach((line, i) => {
+      if (line.endsWith('\r')) {
+        problems.push({ level: 'error', file: rel, line: i + 1, msg: '存在 CRLF 行尾' });
+      }
+    });
+  }
+}
+
+const errors2 = problems.filter((p) => p.level === 'error');
+const warns2 = problems.filter((p) => p.level === 'warn');
 
 console.log(`检查了 ${files.length} 个文件`);
 if (!problems.length) {
@@ -130,13 +157,13 @@ if (!problems.length) {
   process.exit(0);
 }
 
-for (const p of errors) {
+for (const p of errors2) {
   console.log(`✘ ${p.file}${p.line ? ':' + p.line : ''}  ${p.msg}`);
 }
-for (const p of warns) {
+for (const p of warns2) {
   console.log(`⚠ ${p.file}${p.line ? ':' + p.line : ''}  ${p.msg}`);
 }
 
 console.log('');
-console.log(`错误 ${errors.length} / 警告 ${warns.length}`);
-process.exit(errors.length ? 1 : 0);
+console.log(`错误 ${errors2.length} / 警告 ${warns2.length}`);
+process.exit(errors2.length ? 1 : 0);
