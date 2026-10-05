@@ -198,6 +198,72 @@ for (const name of batFiles) {
   console.log('');
 }
 
+// ── 附加检查：.ps1 文件必须有 UTF-8 BOM ──
+//
+// 这是踩过的最贵的一个坑（花了整轮时间才定位）：
+//   Windows PowerShell 5.1 读取**无 BOM** 的 .ps1 时，会按系统 ANSI
+//   代码页解析。文件里的中文（如「账号 ID：」）变成乱码，
+//   而乱码字节会破坏引号配对，导致**整个文件语法崩溃**：
+//       Unexpected token '}' in expression or statement.
+//       Missing closing '}' in statement block
+//   报错位置指向毫不相关的行，极难定位。
+//
+//   修法：写 .ps1 时必须用 UTF-8 **带 BOM**（New-Object UTF8Encoding($true)）。
+//
+// 注意与 .bat 的差别：
+//   .bat  → ANSI/GBK，**不能**有 BOM（BOM 会在首行显示成乱码字符）
+//   .ps1  → UTF-8，**必须**有 BOM
+const psFiles = [];
+const walkPs = (dir) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (['node_modules', '.git', 'dist'].includes(e.name)) continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkPs(p);
+    else if (e.name.endsWith('.ps1')) psFiles.push(p);
+  }
+};
+walkPs(ROOT);
+
+if (psFiles.length) {
+  console.log(`\n检查 ${psFiles.length} 个 PowerShell 文件\n`);
+  for (const p of psFiles) {
+    const rel = path.relative(ROOT, p).replace(/\\/g, '/');
+    const buf = fs.readFileSync(p);
+    const hasBom = buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
+
+    // 含非 ASCII 字符吗
+    const text = buf.toString('utf8');
+    const hasNonAscii = /[^\x00-\x7F]/.test(text);
+
+    if (!hasBom && hasNonAscii) {
+      report(rel, 'error', 0, '缺少 UTF-8 BOM —— PowerShell 5.1 会按 ANSI 解析，中文变乱码并破坏语法');
+      console.log(`  \x1b[31m✘\x1b[0m ${rel}：缺 BOM 且含中文（会语法崩溃）`);
+    } else if (!hasBom) {
+      console.log(`  \x1b[33m⚠\x1b[0m ${rel}：无 BOM（当前是纯 ASCII，暂时安全，但加中文后会炸）`);
+    } else {
+      console.log(`  \x1b[32m✔\x1b[0m ${rel}：UTF-8 BOM`);
+    }
+
+    // 行尾检查
+    // .ps1 用纯 LF 是可以的（PowerShell 能正确处理），
+    // 但**不要混用** —— 混用在某些解析路径下会出错。
+    const crlf = (() => {
+      let n = 0;
+      for (let i = 0; i < buf.length - 1; i++) if (buf[i] === 0x0d && buf[i + 1] === 0x0a) n++;
+      return n;
+    })();
+    const lf = buf.filter((b) => b === 0x0a).length;
+    if (crlf > 0 && crlf !== lf) {
+      console.log(`    \x1b[31m✘ 行尾混用：CRLF ${crlf} / 纯 LF ${lf - crlf}\x1b[0m`);
+      report(rel, 'error', 0, `行尾混用（CRLF ${crlf} / LF ${lf - crlf}）`);
+    } else if (crlf === lf && lf > 0) {
+      console.log(`    \x1b[32m✔\x1b[0m 行尾统一 CRLF（${crlf} 行）`);
+    } else {
+      console.log(`    \x1b[32m✔\x1b[0m 行尾统一 LF（${lf} 行）`);
+    }
+  }
+}
+
 // ── 输出 ──
 const errors = problems.filter((p) => p.level === 'error');
 
