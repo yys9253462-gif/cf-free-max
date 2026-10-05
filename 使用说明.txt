@@ -1,0 +1,100 @@
+Cloudflare 免费额度工具箱 v1.0.0
+================================================================
+
+这是什么
+--------
+Cloudflare 免费层给得很多（Workers 每天 10 万请求、R2 10GB 且出站流量
+免费、D1 500 万行/天、Tunnel 不限量……），但额度分散在十来个产品页面，
+很难知道自己剩多少、被什么吃掉了。
+
+这个工具就是把这些变成一条命令 / 一个菜单。
+
+
+怎么用（两种方式）
+------------------
+
+方式一：双击 quickcheck.bat
+    零依赖，立刻能用。用 Windows 自带的 curl 和 PowerShell。
+    能看：额度对照表、实时用量、凭证检查、KV 写入估算。
+
+方式二：双击 launcher.bat
+    功能完整（体检、审计、批量操作、彩色交互菜单）。
+    需要 Node.js —— 如果没装，会自动下载一个便携版（约 30MB）
+    解压到 %LOCALAPPDATA%\cf-free-max\node，不会影响系统。
+
+    注意：命令行模式下也可以带参数调用，例如
+        launcher.bat whoami
+        launcher.bat usage --json
+
+
+第一次使用
+----------
+1. 先去 https://dash.cloudflare.com/profile/api-tokens 创建 API Token
+   （不要用 Global API Key，权限太大）
+
+2. 需要的权限：
+     Account Analytics:Read   查用量
+     Zone:Read                列出域名
+     DNS:Edit                 改 DNS（可选）
+     Zone Settings:Edit       改域名设置（可选）
+     Cache Purge:Purge        清缓存（可选）
+     Workers R2 Storage:Edit  R2 操作（可选）
+
+   只想看用量的话，前两项就够了。
+
+3. 双击 quickcheck.bat → 选 [7] 配置凭据，粘贴进去即可。
+   凭据保存在同目录的 .env 文件里，不会上传到任何地方。
+
+
+目录结构
+--------
+  launcher.bat      完整版启动器（自动获取 Node）
+  quickcheck.bat    零依赖快速版
+  README-FIRST.txt  本文件
+  bin\             程序入口
+  src\             源码
+  docs\            文档（含交互模式说明、省钱指南、常见场景）
+  scripts\         lint、测试、打包脚本
+  test\            测试
+  .env.example      凭据模板
+
+
+常见问题
+--------
+
+Q: 会不会产生费用？
+A: 不会。工具只调用 Cloudflare 的 API，不做任何付费操作。
+   唯一的例外是 R2 存储超过 10GB 会按 $0.015/GB 计费 ——
+   但那是你在控制台的行为，工具只会在接近时提醒你。
+
+Q: 需要管理员权限吗？
+A: 不需要。便携版 Node 装在 %LOCALAPPDATA%，不需要管理员。
+
+Q: 下载 Node 失败怎么办？
+A: 手动下载 https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip
+   解压后确保 node.exe 在 %LOCALAPPDATA%\cf-free-max\node\node.exe
+   然后重新运行「启动.bat」。
+
+Q: 「快查.bat」报错说找不到 curl？
+A: 极老的系统才没有。可以直接用「启动.bat」，它走 Node。
+
+Q: 中文显示乱码？
+A: 本工具按 GBK 编码写的，中文 Windows 直接双击运行不会乱码。
+   如果乱码，检查系统区域设置是否改成了非中文。
+
+Q: 能查别人的账号吗？
+A: 不能，也不该。工具用的是你的 Token，只能访问 Token 授权范围内的资源。
+
+
+卸载
+----
+删除整个文件夹即可。
+如果用过「启动.bat」下载了便携版 Node，
+再删掉 %LOCALAPPDATA%\cf-free-max 目录就彻底干净了。
+
+
+项目主页
+--------
+https://github.com/yys9253462-gif/cf-free-max
+
+License: MIT

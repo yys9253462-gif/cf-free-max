@@ -33,7 +33,9 @@ const SELF = path.resolve(fileURLToPath(import.meta.url));
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === 'node_modules' || e.name === '.git') continue;
+    // 跳过产物目录 —— dist/ 是打包输出，里面是同一批文件的副本，
+    // 扫它会报一堆重复问题（实测：505 条警告全是 dist 里的副本）
+    if (['node_modules', '.git', 'dist', 'build', 'coverage'].includes(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
     else if (e.name.endsWith('.mjs') && path.resolve(p) !== SELF) out.push(p);
