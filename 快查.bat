@@ -24,6 +24,21 @@ setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "PS1_DIR=%SCRIPT_DIR%\scripts"
+
+REM ─── 控制台字体检查 ───
+REM
+REM 旧版 conhost 默认字体 Lucida Console 没有中文字形，
+REM 中文会显示成方块 ???（不是乱码 —— 那是编码问题，两种修法不同）。
+REM
+REM 这里在进入界面前检测一次，给出纯英文的修改指引。
+REM 用 PowerShell 检测（注册表读取 + 已知字体列表）。
+if not defined CFM_NO_FONT_CHECK (
+  if exist "%PS1_DIR%\check-font.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\check-font.ps1" >nul 2>&1
+    if errorlevel 1 call :warn_font
+  )
+)
+)
 set "ENV_FILE=%SCRIPT_DIR%\.env"
 title Cloudflare 免费额度工具箱
 color 0B
@@ -593,6 +608,28 @@ echo  请确保压缩包解压完整，包含 bin\ 和 src\ 目录。
 echo.
 pause
 goto :deploy_menu
+
+REM ─── 字体警告（纯英文，因为中文此刻显示不出来）───
+:warn_font
+echo.
+echo  ============================================================
+echo   WARNING: Console font cannot display Chinese
+echo  ============================================================
+echo.
+echo   Every Chinese character will show as a box.
+echo   The tool works fine; this is only a font issue.
+echo.
+echo   FIX (10 seconds):
+echo     1. Right-click the TITLE BAR of this window
+echo     2. Choose "Properties"
+echo     3. Go to the "Font" tab
+echo     4. Change font to:  NSimSun  or  Consolas
+echo     5. Click OK
+echo.
+echo   ============================================================
+echo.
+ping -n 4 127.0.0.1 >nul 2>&1
+goto :eof
 
 :quit
 cls
