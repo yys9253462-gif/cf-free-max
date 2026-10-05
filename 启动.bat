@@ -55,6 +55,115 @@ REM 支持传参：启动.bat whoami 会直接执行命令
 goto :entry_check
 
 
+
+REM ═══════════════════════════════════════════════════════════════════════════
+REM  首次运行时的 Node 检查（子程序）
+REM
+REM  设置 NODE_READY：1 = 可用，0 = 不可用
+REM
+REM  为什么单独一个子程序：
+REM    主流程里的 Node 检查在 :entry_check，但那是「准备启动主程序」时用的，
+REM    会直接跳到下载/启动流程。首次流程需要的是「只确认可用性」，
+REM    失败了还能继续走后面的步骤（至少授权里的 [1][2] 不需要 Node）。
+REM ═══════════════════════════════════════════════════════════════════════════
+
+REM ─── 下载便携版 Node（子程序版，用 call 调用）───
+:do_download_node
+if not exist "%NODE_DIR%" mkdir "%NODE_DIR%" >nul 2>&1
+if not exist "%CFM_HOME%" mkdir "%CFM_HOME%" >nul 2>&1
+set "TEMP_ZIP=%CFM_HOME%\%NODE_ZIP%"
+
+where curl >nul 2>&1
+if not %errorlevel%==0 goto :ddn_ps
+
+echo   尝试官方源 nodejs.org ...
+curl -L --fail --progress-bar -o "%TEMP_ZIP%" "%NODE_URL%"
+if %errorlevel%==0 goto :ddn_ok
+
+echo.
+echo   官方源失败，切换国内镜像 ...
+curl -L --fail --progress-bar -o "%TEMP_ZIP%" "%NODE_MIRROR%"
+if %errorlevel%==0 goto :ddn_ok
+goto :eof
+
+:ddn_ps
+echo   使用 PowerShell 下载 ...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '%NODE_URL%' -OutFile '%TEMP_ZIP%' -UseBasicParsing } catch { try { Invoke-WebRequest -Uri '%NODE_MIRROR%' -OutFile '%TEMP_ZIP%' -UseBasicParsing } catch { exit 1 } }"
+if not %errorlevel%==0 goto :eof
+
+:ddn_ok
+echo.
+echo   下载完成，正在解压 ...
+tar -xf "%TEMP_ZIP%" -C "%NODE_DIR%" --strip-components=1 >nul 2>&1
+if not %errorlevel%==0 (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Expand-Archive -Path '%TEMP_ZIP%' -DestinationPath '%NODE_DIR%\_tmp' -Force; $inner = Get-ChildItem '%NODE_DIR%\_tmp' -Directory | Select-Object -First 1; Get-ChildItem $inner.FullName | Move-Item -Destination '%NODE_DIR%' -Force; Remove-Item '%NODE_DIR%\_tmp' -Recurse -Force"
+)
+del "%TEMP_ZIP%" >nul 2>&1
+goto :eof
+
+
+:ensure_node_for_firstrun
+set "NODE_READY=1"
+
+REM 系统 Node？
+where node >nul 2>&1
+if %errorlevel%==0 goto :eof
+
+REM 便携版 Node？
+if exist "%NODE_EXE%" (
+  set "PATH=%NODE_DIR%;%PATH%"
+  goto :eof
+)
+
+REM 都没有 —— 问用户要不要下载
+cls
+echo.
+echo  ╔════════════════════════════════════════════════════════════════════╗
+echo  ║              需要先装 Node.js                                       ║
+echo  ╚════════════════════════════════════════════════════════════════════╝
+echo.
+echo  后续的授权和部署功能需要 Node.js 运行时。
+echo.
+echo  你可以：
+echo.
+echo    [1]  自动下载便携版（约 30 MB，解压到 %NODE_DIR%）
+echo    [2]  跳过（额度查询等功能仍可用，授权和部署稍后再说）
+echo.
+echo  ────────────────────────────────────────────────────────────────────
+echo.
+set "NODECHOICE="
+set /p "NODECHOICE=请选择 [1-2]: "
+if not defined NODECHOICE set "NODECHOICE=1"
+
+if "%NODECHOICE%"=="2" goto :node_skip
+if not "%NODECHOICE%"=="1" goto :node_skip
+
+REM 下载 —— 复用主流程的下载逻辑。
+REM
+REM 注意：:download_node 那段是用 goto 跳转的（不是 call），
+REM 它结束时会 goto :done 或 exit，不会返回这里。
+REM 所以这里用 start 起一个子进程来下载，等它结束再继续。
+echo.
+echo  正在下载便携版 Node（约 30 MB）...
+echo.
+call :do_download_node
+if not exist "%NODE_EXE%" goto :node_failed
+set "PATH=%NODE_DIR%;%PATH%"
+goto :eof
+
+:node_failed
+echo.
+echo  Node 下载失败，先跳过。可以稍后重新运行本文件重试。
+echo.
+ping -n 3 127.0.0.1 >nul 2>&1
+set "NODE_READY=0"
+goto :eof
+
+:node_skip
+set "NODE_READY=0"
+goto :eof
+
+
 :first_run_check
 cls
 echo.
@@ -66,23 +175,46 @@ echo  正在检查你的环境（工具链 / 网络 / 授权 / 配置）...
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\check-env.ps1"
 
+REM ─── 先确保 Node 可用 ───
+REM
+REM 为什么要在授权之前：
+REM   授权向导的 [3] Cloudflare 浏览器登录要跑 `npx wrangler login`，
+REM   没有 Node 会直接失败。实测发现原来的顺序是「先授权后检查 Node」，
+REM   结果没装 Node 的用户点 [3] 会看到一堆 npm 报错，不知道为什么。
+REM
+REM   所以：先确认 Node，再进授权。
+call :ensure_node_for_firstrun
+if "%NODE_READY%"=="0" goto :first_run_done
+
+:first_run_ask
 echo.
 echo  ────────────────────────────────────────────────────────────────
 echo.
 echo  接下来做什么？
 echo.
 echo    [1]  配好授权再启动（推荐）
-echo    [2]  直接启动（有些功能会不可用）
+echo          会引导你完成 GitHub 和 Cloudflare 授权
+echo    [2]  跳过授权，直接启动
+echo          额度查询等功能可用；部署功能稍后配置
 echo    [0]  退出
 echo.
 set "FIRSTCHOICE="
 set /p "FIRSTCHOICE=请选择 [0-2]: "
-if not defined FIRSTCHOICE goto :entry_check
+
+REM 输入耗尽（被脚本调用）→ 按推荐选项走，不卡住
+if not defined FIRSTCHOICE set "FIRSTCHOICE=1"
 
 if "%FIRSTCHOICE%"=="1" goto :first_run_auth
-if "%FIRSTCHOICE%"=="2" goto :first_run_done
+if "%FIRSTCHOICE%"=="2" goto :first_run_deploy
 if "%FIRSTCHOICE%"=="0" exit /b 0
-goto :first_run_check
+
+REM 无效输入 → 只重问，不重跑检测
+REM（原来是 goto :first_run_check，会让整个检测重复执行一遍）
+echo.
+echo  无效选择，请输入 0、1 或 2。
+ping -n 2 127.0.0.1 >nul 2>&1
+goto :first_run_ask
+
 
 :first_run_auth
 if not exist "%PS1_DIR%\auth-setup.ps1" goto :first_run_deploy
@@ -202,11 +334,29 @@ echo  ─────────────────────────────────────
 echo.
 set /p "CHOICE=现在自动下载便携版 Node？[Y/n] "
 
-REM 输入耗尽（被脚本调用/管道）时按默认处理，不卡住
-if not defined CHOICE set "CHOICE=Y"
+REM 输入耗尽的兜底 —— 见下面的 :no_input 分支
+if not defined CHOICE goto :no_input
 if /i "%CHOICE%"=="n" goto :user_declined
 if /i "%CHOICE%"=="no" goto :user_declined
 goto :download_node
+
+:no_input
+REM 输入耗尽的兜底 —— 不下载。
+REM
+REM 原来是「读不到就按 Y 下载」，但用户在别处按了 Ctrl+C、
+REM 或输入被前面的 set /p 吃掉，都会走到这里，
+REM 结果意外开始 30MB 下载。改成明确提示后退出。
+REM
+REM 注意：这里**不要用 pause** —— 输入耗尽往往意味着这是被脚本
+REM 调用的场景（不是人坐在电脑前），pause 会永久卡住。
+echo.
+echo  没有收到输入，已取消。
+echo.
+echo  如果想自动下载便携版 Node（约 30 MB），请重新运行并选择 [Y]。
+echo  或者手动安装：https://nodejs.org
+echo.
+exit /b 0
+
 
 :user_declined
 echo.

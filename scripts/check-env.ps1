@@ -337,8 +337,20 @@ function Check-Auth {
             if ($c -match 'oauth_token|api_token') { $foundWrangler = $true; break }
         }
     }
-    if ($foundWrangler) {
+    # 检查 wrangler 是否真的可用 ——
+    # 光看配置文件不够：配置文件可能存在，但 npx/wrangler 命令都不可用
+    # （实测踩过：干净环境里报了「已登录」，实际根本没装 wrangler）
+    $wranglerCmd = Get-Command wrangler -ErrorAction SilentlyContinue
+    $npxCmd = Get-Command npx -ErrorAction SilentlyContinue
+
+    if ($foundWrangler -and ($wranglerCmd -or $npxCmd)) {
         Add-Result 'wrangler 登录' 'ok' '已登录（部署功能可用）'
+    }
+    elseif ($foundWrangler -and -not ($wranglerCmd -or $npxCmd)) {
+        Add-Result 'wrangler 登录' 'skip' '有登录记录但缺 Node 环境（装完 Node 后自动可用）'
+    }
+    elseif (-not $wranglerCmd -and -not $npxCmd) {
+        Add-Result 'wrangler 登录' 'skip' '未检测（需要先有 Node 环境）'
     }
     else {
         Add-Result 'wrangler 登录' 'warn' '未登录（部署功能需要）' `

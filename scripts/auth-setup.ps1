@@ -1,4 +1,4 @@
-﻿# ═══════════════════════════════════════════════════════════════════════════
+﻿<#  ═══════════════════════════════════════════════════════════════════════════
 #  auth-setup.ps1 — 授权向导（GitHub + Cloudflare）
 #
 #  为什么做成独立的交互式向导：
@@ -20,6 +20,75 @@ param(
     [ValidateSet('', 'github', 'cf-token', 'cf-login', 'status')]
     [string]$Action = ''
 )
+
+
+<#
+安全读取输入 —— 检测「输入耗尽」并返回特殊标记。
+
+⚠️ 实测发现的关键行为（写这个函数前以为是另一回事）：
+
+   PowerShell 的 Read-Host 在 **stdin 被重定向到 nul** 时，
+   **不会抛异常，也不阻塞** —— 它直接返回**空字符串**。
+
+   实测方式：`powershell -File x.ps1 < nul`
+   结果：Read-Host 立刻返回 ""，脚本继续往下跑。
+
+   这带来一个隐蔽的问题：
+     如果脚本在 while 循环里读输入（比如主菜单），
+     stdin=nul 会让它**空转**——每轮立刻拿到空值、立刻重新显示菜单，
+     CPU 跑满但屏幕上只有刷屏，看起来像死机。
+
+   所以这个函数返回特殊标记，让调用方能区分：
+     · 用户输入了内容        → 返回内容
+     · 用户直接回车          → 返回 Default
+     · 输入源真的没东西了    → 返回 __NO_INPUT__（调用方应退出循环）
+#>
+function Read-InputSafe {
+    param(
+        [string]$Prompt = '',
+        [string]$Default = ''
+    )
+
+    $v = $null
+    try {
+        $v = Read-Host $Prompt
+    }
+    catch {
+        # 极少数情况（stdin 句柄不可用）会抛异常
+        return '__NO_INPUT__'
+    }
+
+    # Read-Host 返回空 —— 区分「用户按了回车」和「没有输入源」
+    #
+    # 判据用 [Console]::IsInputRedirected，实测行为：
+    #   · stdin 接到 nul      → True，Read-Host 读到空
+    #   · stdin 来自管道      → True，读到管道内容
+    #   · 真实终端（有键盘）  → False
+    #
+    # 所以：IsInputRedirected 为 True 且读到空 = 输入源真的没东西了。
+    #
+    # ⚠️ 不要用 [Environment]::UserInteractive 判断 ——
+    #    它在 Start-Process 启动的进程里**始终是 true**，
+    #    即使 stdin 被重定向。实测踩过，等于没判断。
+    if ([string]::IsNullOrWhiteSpace($v)) {
+        if ([Console]::IsInputRedirected) {
+            return '__NO_INPUT__'
+        }
+        # 真实终端 + 空输入 = 用户按了回车
+        if ($Default) { return $Default }
+        return ''
+    }
+
+    return $v
+}
+
+<#
+检查是否为「无输入」状态。
+#>
+function Test-NoInput {
+    param([string]$Value)
+    return $Value -eq '__NO_INPUT__'
+}
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -132,7 +201,14 @@ function Invoke-GitHubAuth {
         Write-Host '     https://cli.github.com/' -ForegroundColor DarkGray
         Write-Host ''
 
-        $choice = Read-Host '  现在用 winget 自动安装吗？[Y/n]'
+        $choice = Read-InputSafe -Prompt '  现在用 winget 自动安装吗？[Y/n]' -Default 'n'
+
+        if (Test-NoInput $choice) {
+            Write-Host ''
+            Write-Host '  没有收到输入，跳过安装。' -ForegroundColor DarkGray
+            Write-Host ''
+            return
+        }
         if ($choice -notmatch '^[Nn]') {
             Write-Host ''
             Write-Host '  正在安装（可能需要几分钟）...' -ForegroundColor Gray
@@ -145,14 +221,14 @@ function Invoke-GitHubAuth {
                 Write-Host '  ⚠ 需要重开一个终端才能识别 gh 命令。' -ForegroundColor Yellow
                 Write-Host '    请关闭本窗口，重新运行 启动.bat。' -ForegroundColor Yellow
                 Write-Host ''
-                Read-Host '  按回车返回'
+                Read-InputSafe -Prompt "  按回车返回"
                 return
             }
             else {
                 Write-Host ''
                 Write-Host '  自动安装失败，请手动下载：https://cli.github.com/' -ForegroundColor Red
                 Write-Host ''
-                Read-Host '  按回车返回'
+                Read-InputSafe -Prompt "  按回车返回"
                 return
             }
         }
@@ -160,7 +236,7 @@ function Invoke-GitHubAuth {
             Write-Host ''
             Write-Host '  已跳过。' -ForegroundColor DarkGray
             Write-Host ''
-            Read-Host '  按回车返回'
+            Read-InputSafe -Prompt "  按回车返回"
             return
         }
     }
@@ -174,7 +250,7 @@ function Invoke-GitHubAuth {
         Write-Host ''
         Write-Host '  如果这个账号不对，需要先退出：gh auth logout' -ForegroundColor DarkGray
         Write-Host ''
-        Read-Host '  按回车返回'
+        Read-InputSafe -Prompt "  按回车返回"
         return
     }
 
@@ -192,7 +268,13 @@ function Invoke-GitHubAuth {
     Write-Host '  ⚠ 浏览器没自动打开的话，手动访问：https://github.com/login/device' -ForegroundColor Yellow
     Write-Host ''
 
-    Read-Host '  准备好了按回车开始'
+    $ready = Read-InputSafe -Prompt '  准备好了按回车开始'
+    if (Test-NoInput $ready) {
+        Write-Host ''
+        Write-Host '  没有收到输入，已取消。' -ForegroundColor DarkGray
+        Write-Host ''
+        return
+    }
 
     Write-Host ''
     Write-Host '  正在启动授权流程...' -ForegroundColor Gray
@@ -221,7 +303,7 @@ function Invoke-GitHubAuth {
     }
 
     Write-Host ''
-    Read-Host '  按回车返回'
+    Read-InputSafe -Prompt "  按回车返回"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -250,7 +332,13 @@ function Invoke-CloudflareToken {
     Write-Host '   6. 复制显示出来的 Token（只显示这一次）' -ForegroundColor DarkGray
     Write-Host ''
 
-    Read-Host '  按回车打开浏览器'
+    $open = Read-InputSafe -Prompt '  按回车打开浏览器'
+    if (Test-NoInput $open) {
+        Write-Host ''
+        Write-Host '  没有收到输入，已取消。' -ForegroundColor DarkGray
+        Write-Host ''
+        return
+    }
 
     Start-Process 'https://dash.cloudflare.com/profile/api-tokens'
     Write-Host ''
@@ -262,13 +350,20 @@ function Invoke-CloudflareToken {
     while ($true) {
         $attempt++
         Write-Host ''
-        $input = Read-Host '  粘贴 Token（留空取消）'
+        $input = Read-InputSafe -Prompt '  粘贴 Token（留空取消）'
+
+        if (Test-NoInput $input) {
+            Write-Host ''
+            Write-Host '  没有收到输入，已取消。' -ForegroundColor DarkGray
+            Write-Host ''
+            return
+        }
 
         if ([string]::IsNullOrWhiteSpace($input)) {
             Write-Host ''
             Write-Host '  已取消。' -ForegroundColor DarkGray
             Write-Host ''
-            Read-Host '  按回车返回'
+            Read-InputSafe -Prompt "  按回车返回"
             return
         }
 
@@ -346,7 +441,7 @@ function Invoke-CloudflareToken {
             Write-Host ''
             Write-Host '  配置完成！回到主菜单选 [1] 或 [2] 就能用了。' -ForegroundColor Green
             Write-Host ''
-            Read-Host '  按回车返回'
+            Read-InputSafe -Prompt "  按回车返回"
             return
         }
         else {
@@ -366,7 +461,7 @@ function Invoke-CloudflareToken {
         if ($attempt -ge 3) {
             Write-Host '  已尝试 3 次，先返回吧。' -ForegroundColor Yellow
             Write-Host ''
-            Read-Host '  按回车返回'
+            Read-InputSafe -Prompt "  按回车返回"
             return
         }
     }
@@ -419,7 +514,7 @@ function Invoke-CloudflareLogin {
     }
 
     Write-Host ''
-    Read-Host '  按回车返回'
+    Read-InputSafe -Prompt "  按回车返回"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -514,7 +609,7 @@ function Show-AuthStatus {
     Write-Host '        · 要部署网站    → 需要 wrangler 登录' -ForegroundColor DarkGray
     Write-Host '        · 部署私有仓库  → 还需要 GitHub 授权' -ForegroundColor DarkGray
     Write-Host ''
-    Read-Host '  按回车返回' | Out-Null
+    Read-InputSafe -Prompt "  按回车返回" | Out-Null
 }
 # ═══════════════════════════════════════════════════════════════
 # 主菜单
@@ -542,7 +637,15 @@ function Show-Menu {
         Write-Host '    [0]  返回' -ForegroundColor DarkGray
         Write-Host ''
 
-        $choice = Read-Host '  请选择 [0-5]'
+        $choice = Read-InputSafe -Prompt '  请选择 [0-5]'
+
+        # 无输入（管道耗尽 / 窗口被关）→ 直接退出，不挂住
+        if (Test-NoInput $choice) {
+            Write-Host ''
+            Write-Host '  没有收到输入，已退出授权向导。' -ForegroundColor DarkGray
+            Write-Host ''
+            return
+        }
 
         switch ($choice) {
             '1' { Invoke-GitHubAuth }
@@ -554,12 +657,12 @@ function Show-Menu {
                 if (Test-Path $checkScript) {
                     & powershell -NoProfile -ExecutionPolicy Bypass -File $checkScript
                     Write-Host ''
-                    Read-Host '  按回车返回'
+                    Read-InputSafe -Prompt "  按回车返回"
                 }
                 else {
                     Write-Host ''
                     Write-Host '  找不到 check-env.ps1' -ForegroundColor Red
-                    Read-Host '  按回车返回'
+                    Read-InputSafe -Prompt "  按回车返回"
                 }
             }
             '0' { return }

@@ -6,6 +6,11 @@
  *      或 pnpm cfm <命令>
  */
 
+// ⚠️ 必须在其它 import 之前初始化终端编码 ——
+//    它要包装 process.stdout.write，晚于任何输出就没意义了。
+import { setupTerminalEncoding } from '../src/lib/terminal-encoding.mjs';
+setupTerminalEncoding();
+
 import { loadEnvFile, log, parseArgs, color } from '../src/lib/util.mjs';
 import { CFClient, CFError } from '../src/lib/cf.mjs';
 
