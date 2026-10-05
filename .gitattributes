@@ -37,7 +37,15 @@ Makefile         text eol=lf
 # Windows 批处理必须是 CRLF，否则某些解析器会出错
 *.bat    text eol=crlf
 *.cmd    text eol=crlf
-*.ps1    text eol=crlf
+
+# ⚠️ PowerShell 脚本用 LF 且**必须带 UTF-8 BOM**（编码由文件本身决定，
+#    gitattributes 管不了 BOM，但能保证行尾不被改动）。
+#
+#    为什么不声明的话会出问题：
+#      core.autocrlf=true 环境下，检出时会把 .ps1 变成 CRLF，
+#      而 PowerShell 5.1 对 CRLF + BOM 的组合处理有问题（BOM 被吃掉）。
+#      实测踩过：scripts/*.ps1 提交后检出变成 CRLF。
+*.ps1    text eol=lf
 
 # 二进制：不碰
 *.png    binary
