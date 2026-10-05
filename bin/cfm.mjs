@@ -8,71 +8,46 @@
 
 // ⚠️ 必须在其它 import 之前初始化终端编码 ——
 //    它要包装 process.stdout.write，晚于任何输出就没意义了。
-import fs from 'node:fs';
 import { setupTerminalEncoding } from '../src/lib/terminal-encoding.mjs';
-import { checkFontSupport } from '../src/lib/terminal-font.mjs';
 
 setupTerminalEncoding();
 
-// ─── 字体检查 ───
+// ─── 关于「字体检测」的说明 ───
 //
-// 用户实测反馈：在旧版 Windows PowerShell 窗口里打开，满屏方块 ▯▯▯。
+// 曾经在这里加过 checkFontSupport()，检测控制台字体是否支持中文，
+// 不支持就打印英文指引。**已移除**，原因：
 //
-// 根因：conhost 默认字体 Lucida Console 是拉丁字体，没有中文字形。
-// 而 Windows Terminal 默认字体带 CJK 回退 —— 所以开发时没发现。
+//   1. 它调用 execFileSync 启动 powershell 读注册表 ——
+//      子进程会继承控制台，可能影响终端状态
+//   2. 它用 fs.readSync(0, ...) 等用户回车 ——
+//      在旧版 conhost 里这会切换 stdin 模式
 //
-// ⚠️ 方块 ≠ 乱码，两者修法完全不同：
-//     乱码（鈥 鍏嶈垂）→ 编码问题，改编码层
-//     方块（▯▯▯）      → 字体缺字形，改字体
-//   实测时先入为主以为编码问题，查了半天才发现方向错了。
-const _fontCheck = checkFontSupport();
-
-if (!_fontCheck.canShowChinese && !process.env.CFM_NO_FONT_CHECK) {
-  // ⚠️ 这一段必须**纯 ASCII**。
-  //
-  //    讽刺的是：这里要提示的问题就是「中文显示不出来」，
-  //    所以提示本身绝不能用中文 —— 那对用户等于乱码。
-  //    实测踩过：第一版提示写了中文，用户看到的还是方块，
-  //    完全不知道在说什么。
-  const lines = [
-    '',
-    '  ============================================================',
-    '   PROBLEM: Console font cannot display Chinese characters',
-    '  ============================================================',
-    '',
-    '   Your console font is: ' + (_fontCheck.font || '(unknown)'),
-    '',
-    '   This font has no Chinese glyphs, so every Chinese character',
-    '   shows as a hollow box. The tool itself is fine.',
-    '',
-    '   FIX (10 seconds):',
-    '     1. Right-click the TITLE BAR of this window',
-    '     2. Choose "Properties"  (usually the last item)',
-    '     3. Go to the "Font" tab',
-    '     4. Change font to:   NSimSun    or   Consolas',
-    '     5. Click OK, then close and reopen this window',
-    '',
-    '   Alternative: use Windows Terminal',
-    '     Win11: right-click the Start button -> Terminal',
-    '     It handles Chinese out of the box.',
-    '',
-    '  ============================================================',
-    '',
-    '   Press Enter to continue anyway (Chinese will be boxes) ...',
-    '',
-  ];
-  process.stdout.write(lines.join('\n'));
-
-  // 等待回车 —— 给用户改字体的机会。
-  // stdin 不可读（管道/CI）时直接跳过，不阻塞。
+//   实测反馈：加上这段之后，用户原本正常的中文变成了方块。
+//   （用户确认「之前中文能正常显示」）
+//
+//   而它的价值仅仅是「告诉用户字体有问题」—— 如果检测本身
+//   会搞坏显示，那就得不偿失。
+//
+// 所以改回最简做法：**不碰终端状态，只做编码适配**。
+//
+// 如果用户真的遇到字体问题（中文显示成方块），
+// 那属于环境配置，可以让用户自己改字体 —— 工具不该为了
+// 提示这件事去动终端。
+//
+// 需要检测时可以显式开启：CFM_FONT_CHECK=1
+if (process.env.CFM_FONT_CHECK === '1') {
   try {
-    if (process.stdin.isTTY) {
-      fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+    const { checkFontSupport } = await import('../src/lib/terminal-font.mjs');
+    const r = checkFontSupport();
+    if (!r.canShowChinese) {
+      process.stdout.write('\n');
+      process.stdout.write('  [Font warning] Console font may not show Chinese: ' + r.font + '\n');
+      process.stdout.write('  Change it in: title bar -> Properties -> Font -> NSimSun\n');
+      process.stdout.write('\n');
     }
   } catch {
-    /* 非交互环境，直接继续 */
+    /* 检测失败不影响主流程 */
   }
-  process.stdout.write('\n');
 }
 
 import { loadEnvFile, log, parseArgs, color } from '../src/lib/util.mjs';

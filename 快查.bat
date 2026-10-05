@@ -25,19 +25,21 @@ set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "PS1_DIR=%SCRIPT_DIR%\scripts"
 
-REM ─── 控制台字体检查 ───
+REM ─── 关于「字体检查」───
 REM
-REM 旧版 conhost 默认字体 Lucida Console 没有中文字形，
-REM 中文会显示成方块 ???（不是乱码 —— 那是编码问题，两种修法不同）。
+REM 曾经在这里加过字体检测（调 check-font.ps1 读注册表），**已移除**。
 REM
-REM 这里在进入界面前检测一次，给出纯英文的修改指引。
-REM 用 PowerShell 检测（注册表读取 + 已知字体列表）。
-if not defined CFM_NO_FONT_CHECK (
+REM 原因：实测反馈「加上之后中文变方块了」，而用户之前是正常的。
+REM 检测本身要启动 PowerShell 子进程，会继承控制台 —— 可能影响终端状态。
+REM
+REM 工具的价值是能干活，不是检测环境。字体问题让用户自己改就行。
+
+REM 需要检测时显式开启：
+if "%CFM_FONT_CHECK%"=="1" (
   if exist "%PS1_DIR%\check-font.ps1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1_DIR%\check-font.ps1" >nul 2>&1
     if errorlevel 1 call :warn_font
   )
-)
 )
 set "ENV_FILE=%SCRIPT_DIR%\.env"
 title Cloudflare 免费额度工具箱
