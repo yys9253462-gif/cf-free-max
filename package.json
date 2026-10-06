@@ -1,6 +1,6 @@
 {
   "name": "cf-free-max",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "把 Cloudflare 免费额度用满的一键工具箱：额度监控、配置体检、批量运维。零依赖。",
   "type": "module",
   "bin": {

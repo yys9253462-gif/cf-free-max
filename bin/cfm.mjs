@@ -90,7 +90,7 @@ const COMMANDS = {
 
 async function main() {
   if (command === 'version' || flags.version) {
-    console.log('cfm 1.0.0');
+    console.log('cfm 1.0.1');
     return 0;
   }
 

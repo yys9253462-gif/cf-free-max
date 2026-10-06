@@ -1,7 +1,7 @@
 import { log, color, table } from '../lib/util.mjs';
 
 const HELP = `
-${color.bold}cfm${color.reset} — Cloudflare 免费额度用满工具箱  ${color.dim}v1.0.0${color.reset}
+${color.bold}cfm${color.reset} — Cloudflare 免费额度用满工具箱  ${color.dim}v1.0.1${color.reset}
 
 ${color.bold}用法${color.reset}
   cfm <命令> [选项]

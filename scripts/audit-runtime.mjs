@@ -130,9 +130,9 @@ function getVersion() {
   try {
     const t = new TextDecoder('gbk').decode(fs.readFileSync(path.join(ROOT, '启动.bat')));
     const m = t.match(/set "CFM_VERSION=([\d.]+)"/);
-    return m ? m[1] : '1.0.0';
+    return m ? m[1] : '1.0.1';
   } catch {
-    return '1.0.0';
+    return '1.0.1';
   }
 }
 

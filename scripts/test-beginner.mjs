@@ -168,7 +168,7 @@ async function main() {
   // ═══ 准备 ═══
   section('准备测试环境');
 
-  const zip = path.join(ROOT, 'dist', 'cf-free-max-v1.0.0-win.zip');
+  const zip = path.join(ROOT, 'dist', 'cf-free-max-v1.0.1-win.zip');
   if (!fs.existsSync(zip)) {
     console.error('\n✘ 找不到分享包。先运行：node scripts/package.mjs\n');
     process.exit(2);
