@@ -50,6 +50,11 @@ REM     之前跑过的用户永远看不到新向导（实测踩过 —— 用户反馈
 REM     「点启动还是老界面」）。
 REM     带上版本号，版本变了就重走向导。
 set "CFM_VERSION=1.0.0"
+
+REM 可选开关：设为 1 才启用字体检测（默认关）。
+REM ?? 必须显式定义 —— 否则下面 `if "%CFM_FONT_CHECK%"=="1"` 会展开成
+REM    `if ""=="1"`，语法上不报错，但静态检查会报「使用了未定义的变量」。
+if not defined CFM_FONT_CHECK set "CFM_FONT_CHECK="
 set "FIRST_RUN_FLAG=%CFM_HOME%\.initialized-%CFM_VERSION%"
 
 REM 便携版 Node 如果已存在，直接加进 PATH，后面 where node 就能找到
@@ -114,10 +119,26 @@ REM 清掉**旧版**的标记文件（不带版本号的那种），
 REM 否则升级后旧标记还在，逻辑会乱。
 del "%CFM_HOME%\.initialized" >nul 2>&1
 
+REM ─── 支持强制重走向导 ───
+REM
+REM 用法：启动.bat --setup   （或者 -s）
+REM
+REM 为什么要这个：标记文件一旦写入，就不会再走向导。
+REM 但用户可能需要重新配置（换了账号、想重绑域名），
+REM 或者单纯想再看看向导。给个显式入口。
+echo %* | findstr /i /c:"--setup" /c:"-s" >nul 2>&1
+if not errorlevel 1 (
+  echo.
+  echo  [重走向导] 检测到 --setup 参数
+  echo.
+  goto :first_run_start
+)
+
 if exist "%FIRST_RUN_FLAG%" goto :welcome
 if not exist "%PS1_DIR%\check-env.ps1" goto :welcome
 
 REM ─── 首次运行 ───
+:first_run_start
 cls
 echo.
 echo  ╔════════════════════════════════════════════════════════════════════╗
@@ -1146,5 +1167,6 @@ echo  再见。
 echo.
 endlocal
 exit /b 0
+
 
 

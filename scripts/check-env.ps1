@@ -230,20 +230,97 @@ function Check-Network {
         @{ Name = 'npm 官方源'; Url = 'https://registry.npmjs.org'; Need = $false }
     )
 
+    # ─── 并行探测 ───
+    #
+    # ⚠️ 为什么必须并行：
+    #   原实现是串行（5 个目标 × GET+HEAD × 8 秒超时），最坏 80 秒。
+    #   实测（2026-10-07）：全新用户跑 启动.bat 时 40 秒还没到向导菜单，
+    #   **看起来像死机** —— 这是真实的性能 bug，不是测试环境问题。
+    #
+    #   改成并行后，总耗时 = **最慢的那个**（约 8 秒），与目标数量无关。
+    #
+    # 实现用 .NET Runspace 池 ——
+    #   PowerShell 5.1 没有 `ForEach-Object -Parallel`（那是 PS 7+ 的）。
+    $pool = [RunspaceFactory]::CreateRunspacePool(1, $targets.Count)
+    $pool.Open()
+    $handles = @()
+
     foreach ($t in $targets) {
-        $r = Test-Endpoint $t.Url
-        if ($r.Ok) {
-            Add-Result $t.Name 'ok' "可达（$($r.Ms)ms）"
-        }
-        else {
-            $need = if ($t.Need) { 'fail' } else { 'warn' }
-            $hint = if ($t.Name -eq 'GitHub' -or $t.Name -eq 'npm 官方源') {
-                '国内网络可能需要代理：set HTTPS_PROXY=http://127.0.0.1:端口'
+        $ps = [PowerShell]::Create()
+        $ps.RunspacePool = $pool
+
+        # ⚠️ 参数必须逐个 AddArgument，不能靠闭包捕获 ——
+        #    runspace 是独立空间，外层变量在里面不可见。
+        [void]$ps.AddScript({
+            param($Url, $TimeoutSec)
+
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $headers = @{ 'User-Agent' = 'cf-free-max-envcheck/1.0' }
+            $lastError = '未知错误'
+
+            # GET 优先，失败再试 HEAD。
+            # 实测：Cloudflare 的 API 对 HEAD 返回 404/403，
+            #   用 HEAD 会误报「不可达」；只要能拿到**任何** HTTP 响应就算通。
+            foreach ($method in @('Get', 'Head')) {
+                try {
+                    $r = Invoke-WebRequest -Uri $Url -Method $method -TimeoutSec $TimeoutSec `
+                        -UseBasicParsing -Headers $headers -ErrorAction Stop
+                    $sw.Stop()
+                    return [PSCustomObject]@{ Ok = $true; Ms = $sw.ElapsedMilliseconds; Status = [int]$r.StatusCode }
+                }
+                catch {
+                    $resp = $null
+                    if ($_.Exception.Response) { $resp = $_.Exception.Response }
+                    if ($resp -and $resp.StatusCode) {
+                        $sw.Stop()
+                        return [PSCustomObject]@{ Ok = $true; Ms = $sw.ElapsedMilliseconds; Status = [int]$resp.StatusCode }
+                    }
+                    $lastError = $_.Exception.Message
+                }
             }
-            else { '检查网络连接或防火墙' }
-            Add-Result $t.Name $need "不可达：$($r.Error)" $hint
+
+            $sw.Stop()
+            return [PSCustomObject]@{ Ok = $false; Ms = $sw.ElapsedMilliseconds; Error = $lastError }
+        })
+        [void]$ps.AddArgument($t.Url)
+        [void]$ps.AddArgument(8)
+
+        $handles += [PSCustomObject]@{
+            Target = $t
+            Shell  = $ps
+            Handle = $ps.BeginInvoke()
         }
     }
+
+    # 收集结果
+    foreach ($h in $handles) {
+        $t = $h.Target
+        try {
+            $r = $h.Shell.EndInvoke($h.Handle)
+            if ($r -and $r.Ok) {
+                Add-Result $t.Name 'ok' "可达（$($r.Ms)ms）"
+            }
+            else {
+                $errMsg = if ($r) { $r.Error } else { '无响应' }
+                $need = if ($t.Need) { 'fail' } else { 'warn' }
+                $hint = if ($t.Name -eq 'GitHub' -or $t.Name -eq 'npm 官方源') {
+                    '国内网络可能需要代理：set HTTPS_PROXY=http://127.0.0.1:端口'
+                }
+                else { '检查网络连接或防火墙' }
+                Add-Result $t.Name $need "不可达：$errMsg" $hint
+            }
+        }
+        catch {
+            $need = if ($t.Need) { 'fail' } else { 'warn' }
+            Add-Result $t.Name $need "探测异常：$($_.Exception.Message)"
+        }
+        finally {
+            $h.Shell.Dispose()
+        }
+    }
+
+    $pool.Close()
+    $pool.Dispose()
 }
 
 # ─── 3. 授权状态 ───

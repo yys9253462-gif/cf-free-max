@@ -31,6 +31,20 @@ param(
     [string]$OutputFile
 )
 
+# ─── 输出编码适配 ───
+#
+# ⚠️ 必须显式设置，否则 PowerShell 5.1 默认按 UTF-8 输出，
+#    而本脚本是被 GBK 编码的 .bat 调用的 ——
+#    UTF-8 字节进 GBK 控制台 ⇒ 满屏「锟斤拷」。
+#
+#    实测（2026-10-06）：不设这行时，check-env.ps1 的输出里
+#    ╔ 是 E2 95 94（UTF-8 三字节），而 .bat 期望 A9 B0（GBK 双字节）。
+#
+#    不能用 chcp 65001 反着来 —— .bat 自身是 GBK，控制台切 UTF-8
+#    会让批处理里的中文乱码。必须让 PowerShell 迁就控制台。
+[Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(936)
+$OutputEncoding = [System.Text.Encoding]::GetEncoding(936)
+
 $ErrorActionPreference = 'Stop'
 
 # ─── 清洗输入 ───
